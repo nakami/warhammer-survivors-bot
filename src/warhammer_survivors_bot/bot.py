@@ -10,31 +10,24 @@ from pathlib import Path
 
 import cv2
 
-from warhammer_survivors_bot import inputs, levelup, window
+from warhammer_survivors_bot import levelup, window
 from warhammer_survivors_bot.capture import CaptureError, Capturer
+from warhammer_survivors_bot.controls import Controller, KeyboardMouse
 from warhammer_survivors_bot.settings import LABELS, Settings
 from warhammer_survivors_bot.steering import DIRECTIONS, Steering
 from warhammer_survivors_bot.vision import PLAYER_POS, Screen, Vision
 
-# Arrow keys are layout independent, so they are used for movement.
-_DIR_KEYS = {
-    "stay": (), "up": ("up",), "down": ("down",), "left": ("left",), "right": ("right",),
-    "up-left": ("up", "left"), "up-right": ("up", "right"),
-    "down-left": ("down", "left"), "down-right": ("down", "right"),
-}
-_ARROWS = ("up", "down", "left", "right")
-
-
-# Screens that are passed with a single key press or click, on the way to a new run.
-_MENU_ACTIONS: dict[Screen, tuple[tuple, str]] = {
-    Screen.WARNING: (("key", "enter"), ""),
-    Screen.TITLE: (("click", 960, 667), ""),
-    Screen.UNIVERSE: (("click", 335, 957), "Universe select: starting Warhammer 40,000."),
-    Screen.MAIN_MENU: (("click", 287, 207), "Main menu: starting a new run."),
-    Screen.CHARACTER_SELECT: (("key", "enter"), "Character select: keeping last character."),
-    Screen.MISSION_SELECT: (("key", "enter"), "Mission select: starting last mission."),
-    Screen.GAME_OVER: (("key", "enter"), "Game over: continuing."),
-    Screen.RECAP: (("key", "enter"), "Recap: continuing."),
+# Screens passed with one action on the way to a new run: (controls method, log message).
+_MENU_ACTIONS: dict[Screen, tuple[str, str]] = {
+    Screen.WARNING: ("confirm", ""),
+    Screen.TITLE: ("title", ""),
+    Screen.UNIVERSE: ("universe_start", "Universe select: starting Warhammer 40,000."),
+    Screen.MAIN_MENU: ("main_menu_start", "Main menu: starting a new run."),
+    Screen.CHARACTER_SELECT: ("confirm", "Character select: keeping last character."),
+    Screen.MISSION_SELECT: ("confirm", "Mission select: starting last mission."),
+    Screen.GAME_OVER: ("confirm", "Game over: continuing."),
+    Screen.OBJECTIVES: ("confirm", "Completed objectives: continuing."),
+    Screen.RECAP: ("confirm", "Recap: continuing."),
 }
 
 STOP_HOTKEY_VK = 0x77  # F8
@@ -57,7 +50,8 @@ class Bot:
         self._debug_dir = debug_dir
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
-        self._held: set[str] = set()
+        self._controller: Controller | None = None  # kept between runs (see Controller)
+        self.controls: KeyboardMouse | Controller = KeyboardMouse(log)
 
     # ---- lifecycle -------------------------------------------------------------
     @property
@@ -74,20 +68,18 @@ class Bot:
     def stop(self) -> None:
         self._stop.set()
 
-    # ---- input helpers ---------------------------------------------------------
-    def _set_direction(self, direction: str) -> None:
-        wanted = set(_DIR_KEYS[direction])
-        for key in self._held - wanted:
-            inputs.key_up(key)
-        for key in wanted - self._held:
-            inputs.key_down(key)
-        self._held = wanted
+    def _select_controls(self) -> None:
+        if self.settings.background_mode:
+            if self._controller is None:
+                self._controller = Controller(self._log)
+            self.controls = self._controller
+        else:
+            self.controls = KeyboardMouse(self._log)
+        self.controls.open()
+        self._log(f"Input: {self.controls.name}"
+                  + ("" if self.controls.needs_focus else " (works while the game is unfocused)"))
 
-    def _release_all(self) -> None:
-        for key in self._held | set(_ARROWS):
-            inputs.key_up(key)
-        self._held = set()
-
+    # ---- debug output ----------------------------------------------------------
     def _save_debug(self, img, name: str) -> None:
         self._debug_dir.mkdir(exist_ok=True)
         path = self._debug_dir / f"{name}_{time.strftime('%Y%m%d-%H%M%S')}.png"
@@ -129,7 +121,7 @@ class Bot:
         hwnd = window.find_window()
         if hwnd is None:
             return
-        if not window.is_foreground(hwnd):
+        if self.controls.needs_focus and not window.is_foreground(hwnd):
             window.focus(hwnd)  # clicking Stop in the UI moves focus away from the game
             time.sleep(0.3)
             if not window.is_foreground(hwnd):
@@ -137,10 +129,12 @@ class Bot:
         capturer = Capturer()
         try:
             img = capturer.grab(hwnd)
+        except CaptureError:
+            return
         finally:
             capturer.close()
         if Vision().screen(img)[0] == Screen.IN_RUN:
-            inputs.press("esc")
+            self.controls.pause()
             self._log("Paused the game.")
 
     # ---- main loop -------------------------------------------------------------
@@ -151,23 +145,24 @@ class Bot:
             self._log(f"ERROR: {exc!r}")
             raise
         finally:
-            self._release_all()
-            self._pause_if_in_run()
-            self._status({"state": "stopped"})
-            self._log("Bot stopped.")
+            try:
+                self.controls.release()
+                self._pause_if_in_run()
+            finally:
+                self.controls.close()
+                self._status({"state": "stopped"})
+                self._log("Bot stopped.")
 
     def _loop(self) -> None:
         self._log("Bot started. Press F8 or Stop to halt.")
+        if window.find_window() is None:
+            self._log("Game window not found. Start the game first.")
+            return
+        self._select_controls()
+        ctl = self.controls
         vision = Vision()
         steering = Steering()
         capturer = Capturer()
-
-        hwnd = window.find_window()
-        if hwnd is None:
-            self._log("Game window not found. Start the game first.")
-            return
-        window.focus(hwnd)
-        time.sleep(0.3)
 
         last_screen: Screen | None = None
         last_action = 0.0
@@ -191,10 +186,10 @@ class Bot:
             if hwnd is None:
                 self._log("Game window disappeared.")
                 break
-            if not window.is_foreground(hwnd):
-                # Never send input to other applications.
+            if ctl.needs_focus and not window.is_foreground(hwnd):
+                # Keyboard/mouse input would go to another application: wait.
                 if was_foreground:
-                    self._release_all()
+                    ctl.release()
                     self._log("Game not in foreground; waiting (click the game to resume).")
                     self._status({"state": "waiting for focus"})
                 was_foreground = False
@@ -204,10 +199,11 @@ class Bot:
                 self._log("Game focused again; resuming.")
                 was_foreground = True
 
-            rect = window.client_rect(hwnd)
             try:
                 img = capturer.grab(hwnd)
             except CaptureError as exc:
+                ctl.release()
+                self._status({"state": "cannot see game"})
                 self._log(f"Capture failed ({exc}); retrying.")
                 time.sleep(1.0)
                 continue
@@ -239,8 +235,8 @@ class Bot:
                     self._log(f"{screen.value}: {reason}; leaving this screen to you.")
                     told_waiting.add(screen)
 
-            if self._held and (screen != Screen.IN_RUN or not s.move):
-                self._release_all()
+            if ctl.moving and (screen != Screen.IN_RUN or not s.move):
+                ctl.release()
 
             if screen == Screen.IN_RUN and not s.move:
                 status["direction"] = "off"
@@ -249,7 +245,7 @@ class Bot:
                 steering.observe_motion(img, now)
                 hp = vision.health(img)
                 decision = steering.decide(objs, now, hp)
-                self._set_direction(decision.direction)
+                ctl.move(decision.direction)
                 status.update(direction=decision.direction, enemies=len(objs.enemies),
                               xp=len(objs.xp), health=None if hp is None else round(hp * 100))
                 if now - last_report > 3.0:
@@ -265,6 +261,10 @@ class Bot:
                 if every and now - last_overlay > every:
                     self._save_overlay(img, objs, decision, hp)
                     last_overlay = now
+            elif screen == Screen.DISCONNECTED and menu_ready:
+                self._log("'Player disconnected' dialog: closing it.")
+                ctl.confirm()
+                last_action = now
             elif screen == Screen.GAME_OVER and run_started is not None:
                 survived = int(now - run_started)
                 self._log(f"GAME OVER after ~{survived // 60}:{survived % 60:02d} of play.")
@@ -279,32 +279,32 @@ class Bot:
                     settled = (now - screen_since > 1.0 and state == last_levelup
                                and bool(state.cards))
                     last_levelup = state
-                    if (settled or now - screen_since > 4.0) and menu_ready:
+                    # Controller navigation takes several small steps; clicks need
+                    # time for the highlight-then-confirm sequence.
+                    ready = now - last_action > (0.35 if not ctl.needs_focus else 1.5)
+                    if (settled or now - screen_since > 4.0) and ready:
                         card = levelup.choose(state)
+                        index = card.index if card else 0
                         if screen not in told_waiting:  # once per level-up screen
                             self._save_levelup(img)
                             offered = ", ".join(c.kind for c in state.cards) or "unreadable"
                             self._log(f"Level up: offered [{offered}], own {state.weapons} "
-                                      f"weapons / {state.passives} passives.")
+                                      f"weapons / {state.passives} passives; taking card "
+                                      f"{index + 1}"
+                                      + (f" ({card.kind})." if card else " (fallback)."))
                             told_waiting.add(screen)
-                        # First click highlights the card, a second click 1.5 s later
-                        # (if the screen is still open) confirms the same card.
-                        index = card.index if card else 0
-                        x, y = levelup.CARD_CENTERS[index]
-                        self._log(f"Level up: taking card {index + 1}"
-                                  + (f" ({card.kind})." if card else " (fallback)."))
-                        inputs.click(rect.left + x, rect.top + y)
+                        ctl.select_card(index, levelup.highlighted(img), levelup.CARD_CENTERS)
                         last_action = now
             elif screen == Screen.WARGEAR:
                 if not s.open_chests:
                     wait_for_user(f"'{LABELS['open_chests']}' is off")
                 elif menu_ready:
-                    self._log("Wargear chest: pressing Enter (Open / Accept).")
-                    inputs.press("enter")
+                    self._log("Wargear chest: confirming (Open / Accept).")
+                    ctl.confirm()
                     last_action = now
             elif screen == Screen.PAUSED and menu_ready:
                 self._log("Game is paused: resuming.")
-                inputs.press("esc")
+                ctl.resume()
                 last_action = now
             elif screen == Screen.ENHANCEMENTS:
                 if s.buy_enhancements:
@@ -314,23 +314,22 @@ class Bot:
                 elif not s.auto_restart:
                     wait_for_user(f"'{LABELS['auto_restart']}' is off")
                 elif menu_ready:
-                    self._log("Enhancements: pressing Enter (Finish) without buying.")
-                    inputs.press("enter")
+                    # Confirm = "Finish", then confirm the "End Recap" dialog. Never
+                    # anything else here (on a controller, Y would refund everything).
+                    self._log("Enhancements: finishing without buying.")
+                    ctl.confirm()
                     last_action = now
             elif screen in _MENU_ACTIONS:
                 if not s.auto_restart:
                     wait_for_user(f"'{LABELS['auto_restart']}' is off")
                 elif menu_ready:
-                    action, message = _MENU_ACTIONS[screen]
+                    method, message = _MENU_ACTIONS[screen]
                     if message:
                         self._log(message)
-                    if action[0] == "key":
-                        inputs.press(action[1])
-                    else:
-                        inputs.click(rect.left + action[1], rect.top + action[2])
+                    getattr(ctl, method)()
                     last_action = now
             elif screen == Screen.UNKNOWN:
-                # Unknown screen (e.g. game over, chest, dialog): do nothing, keep evidence.
+                # Unknown screen: do nothing, keep evidence.
                 if unknown_since and not unknown_saved and now - unknown_since > 2.0:
                     self._log("Unknown screen for 2s; not acting.")
                     self._save_debug(img, "unknown")

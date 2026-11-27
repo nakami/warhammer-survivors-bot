@@ -58,11 +58,26 @@ def read(img: np.ndarray) -> LevelUp:
         # A card is present if its title row has green text.
         if green[375:405, cx - 160:cx + 160].mean() < 0.01 * 255:
             continue
-        is_new = green[790:825, cx - 160:cx + 160].mean() > 0.15 * 255
+        # NEW is a solid green banner; upgrade cards show a row of outlined
+        # level squares at the same spot, which fills far less of the area.
+        is_new = green[795:818, cx - 55:cx + 55].mean() > 0.55 * 255
         is_weapon = gray[742:778, cx - 90:cx + 90].std() > 20
         cards.append(Card(i, bool(is_new), bool(is_weapon)))
     return LevelUp(cards, int(_occupied(gray, _WEAPON_SLOTS)),
                    int(_occupied(gray, _PASSIVE_SLOTS)))
+
+
+def highlighted(img: np.ndarray) -> int | None:
+    """Index of the card with the selection highlight (controller/keyboard focus)."""
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    green = cv2.inRange(hsv, (45, 80, 80), (85, 255, 255))
+    best, best_val = None, 0.15
+    for i, (cx, _) in enumerate(CARD_CENTERS):
+        strip = np.hstack([green[380:800, cx - 162:cx - 152], green[380:800, cx + 152:cx + 162]])
+        val = strip.mean() / 255.0
+        if val > best_val:
+            best, best_val = i, val
+    return best
 
 
 def score(card: Card, state: LevelUp) -> float:

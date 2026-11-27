@@ -13,6 +13,10 @@ def _frame(cards: list[tuple[bool, bool]], weapons: int, passives: int) -> np.nd
         img[380:400, cx - 80:cx + 80] = GREEN                       # title text
         if is_new:
             img[792:822, cx - 75:cx + 75] = GREEN                    # NEW badge
+        else:
+            for x in range(cx - 75, cx + 75, 19):                    # level squares
+                img[796:817, x:x + 14] = GREEN
+                img[799:814, x + 3:x + 11] = 10
         if is_weapon:
             img[748:772, cx - 60:cx + 60:4] = 255                    # tag text stripes
     for x, y in levelup._WEAPON_SLOTS[:weapons] + levelup._PASSIVE_SLOTS[:passives]:
@@ -55,3 +59,12 @@ def test_no_new_weapons_over_budget() -> None:
 def test_tie_goes_left_and_empty_is_none() -> None:
     assert levelup.choose(_state([(True, True), (True, True)])).index == 0
     assert levelup.choose(LevelUp([], 0, 0)) is None
+
+
+def test_highlighted_card() -> None:
+    img = _frame([(True, True), (True, True), (True, True)], 0, 0)
+    cx = levelup.CARD_CENTERS[1][0]
+    img[380:800, cx - 160:cx - 154] = GREEN
+    img[380:800, cx + 154:cx + 160] = GREEN
+    assert levelup.highlighted(img) == 1
+    assert levelup.highlighted(_frame([(True, True)], 0, 0)) is None

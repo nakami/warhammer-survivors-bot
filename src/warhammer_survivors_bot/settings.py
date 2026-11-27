@@ -11,6 +11,7 @@ SETTINGS_FILE = Path("settings.json")
 
 @dataclass
 class Settings:
+    background_mode: bool = False  # virtual controller + focus hook (game may be unfocused)
     move: bool = True              # dodge enemies and collect XP during a run
     pick_level_ups: bool = True    # choose a level-up card automatically
     open_chests: bool = True       # open "Wargear Acquired!" chests and accept the reward
@@ -33,6 +34,7 @@ class Settings:
 
 # Labels shown in the UI, in display order.
 LABELS: dict[str, str] = {
+    "background_mode": "Background mode: controller + focus hook (applies on Start)",
     "move": "Move (dodge enemies, collect XP)",
     "pick_level_ups": "Pick level-up cards",
     "open_chests": "Open wargear chests",

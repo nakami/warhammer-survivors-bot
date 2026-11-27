@@ -55,3 +55,11 @@ def test_steering_does_not_engage_when_hurt() -> None:
     px, py = PLAYER_POS
     objs = Objects(enemies=[(px + 450, py, 400)])
     assert "right" not in Steering().decide(objs, health=0.3).direction
+
+
+def test_standing_still_is_not_sticky() -> None:
+    px, py = PLAYER_POS
+    steering = Steering()
+    steering.previous = "stay"
+    objs = Objects(enemies=[(px + 450, py, 400)])
+    assert steering.decide(objs, health=0.9).direction != "stay"

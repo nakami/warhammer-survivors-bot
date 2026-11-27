@@ -16,6 +16,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
+# Background mode: virtual controller (needs the ViGEmBus driver) + runtime focus hook.
+background = ["vgamepad>=0.1", "frida>=17"]
 
 [project.scripts]
 warhammer-survivors-bot = "warhammer_survivors_bot.__main__:main"

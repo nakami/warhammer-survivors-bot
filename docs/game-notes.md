@@ -43,9 +43,26 @@ Observations gathered by playing the game through the bot's own interface
   virtual controller works.
 - When a controller that the game is using disconnects, the game shows a
   "Player disconnected – Please reconnect the controller" dialog.
-- Conclusion: on a shared desktop the game only accepts input while focused.
-  Real background play needs the game on its own desktop session (second
-  PC or a VM), or modifying the game, which this project rules out.
+- Faking focus from outside (sending `WM_ACTIVATEAPP`/`WM_ACTIVATE`/
+  `WM_NCACTIVATE`/`WM_SETFOCUS`) is not enough.
+- **What works (with the owner's permission to modify the game at runtime):**
+  Frida hooks inside the game process making `GetForegroundWindow`,
+  `GetActiveWindow` and `GetFocus` return the game window. With those, the
+  virtual controller works while the game is unfocused. (The game uses
+  Rewired for input, which ignores input when the app is not focused.)
+
+## Controller layout (Xbox)
+
+- Move: left stick. Pause: START. Pause menu: B Resume, X Objectives,
+  Y Quit, LB/RB tabs, LT/RT map zoom.
+- Menus, chests, Game Over, Completed Objectives, Recap: A.
+- Level Up: selection starts on card 1; D-pad/stick moves it (highlighted
+  card has a bright green border); A takes it immediately. RB = Armoury.
+- Enhancements: A Finish (then an "End Recap – Confirm" dialog: A Confirm,
+  B Cancel), B Back, **Y Refund All**, LB/RB remove/buy a rank, X toggle
+  active. Affordable prices are white, unaffordable red.
+- If the controller disconnects, a "Player disconnected" dialog appears
+  (A/Enter closes it).
 
 ## Screen flow
 

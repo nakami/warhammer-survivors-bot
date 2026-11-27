@@ -164,7 +164,7 @@ class Steering:
         if name == "stay" and any(
                 math.hypot(ex - px, ey - py) < 250 for ex, ey, _ in objs.enemies):
             total -= 1.0
-        if name == self.previous:
+        if name == self.previous and name != "stay":  # don't let idling become sticky
             total += CONTINUITY
         if name in blocked:
             total -= BLOCKED_PENALTY

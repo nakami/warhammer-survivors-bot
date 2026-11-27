@@ -35,12 +35,23 @@ python -m warhammer_survivors_bot
   automatically, buying enhancements (off by default; not implemented yet), and
   saving annotated debug frames to `screenshots/overlay/` (off by default).
 - The status panel and log show what the bot sees and does.
-- **The game must stay focused while the bot plays.** The game ignores
-  keyboard, mouse and controller input while it is not the active window (see
-  [docs/game-notes.md](docs/game-notes.md)). When you switch to another
-  window, the bot releases all keys and waits; click the game to resume. Note
-  that the game itself keeps running unfocused, so pause it (or stop the bot,
-  which pauses it) before switching away mid-run.
+- **Background mode** (checkbox, applies on Start) lets you keep using your
+  PC while the bot plays. The game ignores keyboard, mouse and controller input
+  whenever it is not the active window, so this mode
+  - plays with a **virtual Xbox controller** (requires the
+    [ViGEmBus](https://github.com/nefarius/ViGEmBus) driver), and
+  - attaches to the running game with [Frida](https://frida.re) and hooks
+    `GetForegroundWindow`/`GetActiveWindow`/`GetFocus` **in memory**, so the
+    game believes it is focused. No game files are changed; the hook is removed
+    when the bot stops.
+
+  Install the extra packages with `pip install -e ".[background]"`. The virtual
+  controller stays connected while the control window is open; closing it makes
+  the game show "Player disconnected" (press Enter to dismiss).
+- Without background mode the bot uses keyboard/mouse and **the game must stay
+  focused**: when you switch to another window the bot releases all keys and
+  waits. The game keeps running unfocused, so stop the bot (which pauses the
+  game) before switching away mid-run.
 - The bot captures the game window directly, so other windows covering it do
   not disturb what it sees (minimizing does).
 - Screens the bot does not recognise are left alone, and a screenshot is saved

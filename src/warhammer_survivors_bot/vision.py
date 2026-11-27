@@ -32,12 +32,15 @@ class Screen(Enum):
     RECAP = "recap"
     ENHANCEMENTS = "enhancements"
     WARGEAR = "wargear"  # chest dialog: "Wargear Acquired!" -> opening -> Accept
+    OBJECTIVES = "objectives"  # "Completed Objectives" after a run
+    DISCONNECTED = "disconnected"  # "Player disconnected" dialog (controller went away)
 
 
 # Template name -> top-left position (x, y) where it appears in the reference frame.
 # Order matters: overlays (level up, paused) must be checked before IN_RUN,
 # because the in-run HUD stays visible underneath them.
 _TEMPLATE_POS: dict[Screen, tuple[int, int]] = {
+    Screen.DISCONNECTED: (805, 452),
     Screen.LEVEL_UP: (850, 140),
     Screen.PAUSED: (875, 135),
     Screen.WARGEAR: (885, 110),
@@ -51,6 +54,7 @@ _TEMPLATE_POS: dict[Screen, tuple[int, int]] = {
     Screen.GAME_OVER: (760, 455),
     Screen.RECAP: (105, 25),
     Screen.ENHANCEMENTS: (105, 22),
+    Screen.OBJECTIVES: (105, 22),
 }
 _SEARCH_MARGIN = 30
 _MATCH_THRESHOLD = 0.8
