@@ -23,7 +23,15 @@ pip install -e ".[dev]"
 
 ```powershell
 python -m warhammer_survivors_bot
+
+# Exploration helper: one action, then a screenshot in ./screenshots
+python -m warhammer_survivors_bot.explore shot
+python -m warhammer_survivors_bot.explore key e        # layout-aware letter
+python -m warhammer_survivors_bot.explore key left 1.0 # hold for 1s
+python -m warhammer_survivors_bot.explore click 960 540
 ```
+
+See [docs/game-notes.md](docs/game-notes.md) for observations about the game.
 
 ## Development
 
