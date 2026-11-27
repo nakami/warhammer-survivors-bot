@@ -16,6 +16,7 @@ class Settings:
     open_chests: bool = True       # open "Wargear Acquired!" chests and accept the reward
     auto_restart: bool = True      # navigate menus / game over to start the next run
     buy_enhancements: bool = False  # spend coins on Enhancements between runs
+    debug_overlays: bool = False   # save annotated frames to screenshots/overlay/
 
     @classmethod
     def load(cls, path: Path = SETTINGS_FILE) -> Settings:
@@ -37,4 +38,5 @@ LABELS: dict[str, str] = {
     "open_chests": "Open wargear chests",
     "auto_restart": "Start the next run automatically",
     "buy_enhancements": "Buy enhancements with coins",
+    "debug_overlays": "Save debug overlays (every 5 s)",
 }

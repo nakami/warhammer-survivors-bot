@@ -261,7 +261,8 @@ class Bot:
                               f"xp {len(objs.xp):<3} near {near:<4} hp {hp_s}"
                               + (f"  wall: {blocked}" if blocked else ""))
                     last_report = now
-                if self.overlay_every and now - last_overlay > self.overlay_every:
+                every = self.overlay_every or (5.0 if s.debug_overlays else 0.0)
+                if every and now - last_overlay > every:
                     self._save_overlay(img, objs, decision, hp)
                     last_overlay = now
             elif screen == Screen.GAME_OVER and run_started is not None:

@@ -32,7 +32,8 @@ python -m warhammer_survivors_bot
   a run, it pauses the game.
 - **Features** toggle parts of the bot while it runs (saved to `settings.json`):
   movement, level-up picks, opening wargear chests, starting the next run
-  automatically, and buying enhancements (off by default; not implemented yet).
+  automatically, buying enhancements (off by default; not implemented yet), and
+  saving annotated debug frames to `screenshots/overlay/` (off by default).
 - The status panel and log show what the bot sees and does.
 - **The game must stay focused while the bot plays.** The game ignores
   keyboard, mouse and controller input while it is not the active window (see
