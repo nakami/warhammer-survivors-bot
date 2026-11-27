@@ -416,7 +416,7 @@ class Bot:
                               f"{len(objs.enemies)},{len(objs.xp)},{decision.direction},"
                               f"{sh[0]:.1f},{sh[1]:.1f},{td},"
                               f"{'|'.join(steering.blocked(now))},{decision.encirclement:.2f}\n")
-                record_every = self.record_every or (5.0 if s.record_test_data else 0.0)
+                record_every = self.record_every or (30.0 if s.record_test_data else 0.0)
                 if record_every and now - last_record > record_every:
                     folder = self._debug_dir / "frames"
                     folder.mkdir(parents=True, exist_ok=True)
