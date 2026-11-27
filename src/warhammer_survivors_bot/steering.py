@@ -160,10 +160,12 @@ class Steering:
                 e0 = abs(math.hypot(engage[0] - px, engage[1] - py) - ENGAGE_DISTANCE)
                 e1 = abs(math.hypot(engage[0] - qx, engage[1] - qy) - ENGAGE_DISTANCE)
                 total += ENGAGE_WEIGHT * (e0 - e1) / ahead
-        # Standing still is only fine when nothing is close.
-        if name == "stay" and any(
-                math.hypot(ex - px, ey - py) < 250 for ex, ey, _ in objs.enemies):
-            total -= 1.0
+        # Don't stand still (common advice): a small cost always, a big one
+        # when enemies are close.
+        if name == "stay":
+            total -= 0.3
+            if any(math.hypot(ex - px, ey - py) < 250 for ex, ey, _ in objs.enemies):
+                total -= 1.0
         if name == self.previous and name != "stay":  # don't let idling become sticky
             total += CONTINUITY
         if name in blocked:

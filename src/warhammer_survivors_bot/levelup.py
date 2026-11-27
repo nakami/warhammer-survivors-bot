@@ -10,7 +10,7 @@ What can be read reliably from pixels (1920x1080 client area):
   slots (right), so the number of owned weapons/passives is known.
 
 Policy (survivors-like rule of thumb: focus on a few weapons and level them):
-upgrade owned weapons > new weapon while below the weapon budget > upgrade
+upgrade owned weapons > new weapon while below the weapon budget (3) > upgrade
 passives > new passives > new weapons beyond the budget.
 """
 
@@ -24,7 +24,9 @@ import numpy as np
 CARD_CENTERS = [(425, 600), (782, 600), (1138, 600), (1495, 600)]
 _WEAPON_SLOTS = [(x, y) for y in (241, 293) for x in (597, 699, 803)]
 _PASSIVE_SLOTS = [(x, y) for y in (241, 293) for x in (1068, 1172, 1276)]
-WEAPON_BUDGET = 4
+# Few weapons, levelled to max (8): evolutions need a max-level weapon
+# (see docs/game-knowledge.md), and spreading upgrades is a common mistake.
+WEAPON_BUDGET = 3
 
 
 @dataclass(frozen=True)

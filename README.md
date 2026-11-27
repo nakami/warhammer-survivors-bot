@@ -70,7 +70,8 @@ python -m warhammer_survivors_bot.explore key left 1.0 # hold for 1s
 python -m warhammer_survivors_bot.explore click 960 540
 ```
 
-See [docs/game-notes.md](docs/game-notes.md) for observations about the game.
+See [docs/game-notes.md](docs/game-notes.md) for observations about the game and
+[docs/game-knowledge.md](docs/game-knowledge.md) for mechanics collected from guides.
 
 ## Development
 
