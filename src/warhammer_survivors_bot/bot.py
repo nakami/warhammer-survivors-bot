@@ -11,10 +11,10 @@ from pathlib import Path
 import cv2
 
 from warhammer_survivors_bot import inputs, levelup, window
-from warhammer_survivors_bot.capture import Capturer
+from warhammer_survivors_bot.capture import CaptureError, Capturer
 from warhammer_survivors_bot.settings import LABELS, Settings
-from warhammer_survivors_bot.steering import Steering
-from warhammer_survivors_bot.vision import Screen, Vision
+from warhammer_survivors_bot.steering import DIRECTIONS, Steering
+from warhammer_survivors_bot.vision import PLAYER_POS, Screen, Vision
 
 # Arrow keys are layout independent, so they are used for movement.
 _DIR_KEYS = {
@@ -47,7 +47,9 @@ Status = Callable[[dict], None]
 class Bot:
     def __init__(self, log: Log = print, status: Status = lambda s: None,
                  debug_dir: Path = Path("screenshots"),
-                 settings: Settings | None = None) -> None:
+                 settings: Settings | None = None, overlay_every: float = 0.0) -> None:
+        # Save an annotated frame every N seconds during runs (0 = off); for tuning.
+        self.overlay_every = overlay_every
         # Read on every frame, so toggles take effect while the bot is running.
         self.settings = settings or Settings()
         self._log = log
@@ -91,6 +93,29 @@ class Bot:
         path = self._debug_dir / f"{name}_{time.strftime('%Y%m%d-%H%M%S')}.png"
         cv2.imwrite(str(path), img)
         self._log(f"Saved screenshot {path}")
+
+    def _save_overlay(self, img, objs, decision, hp) -> None:
+        """Annotated frame: what the bot detected and which way it decided to go."""
+        vis = img.copy()
+        for ex, ey, area in objs.enemies:
+            r = max(8, int(area ** 0.5 / 2))
+            cv2.rectangle(vis, (ex - r, ey - r), (ex + r, ey + r), (255, 0, 255), 2)
+        for gx, gy in objs.xp:
+            cv2.circle(vis, (gx, gy), 6, (255, 255, 0), 2)
+        if decision.target:
+            cv2.circle(vis, decision.target, 16, (0, 255, 0), 3)
+        px, py = PLAYER_POS
+        dx, dy = DIRECTIONS[decision.direction]
+        cv2.arrowedLine(vis, (px, py), (int(px + dx * 120), int(py + dy * 120)),
+                        (0, 255, 255), 4, tipLength=0.3)
+        hp_s = "?" if hp is None else f"{hp:.0%}"
+        cv2.putText(vis, f"{decision.direction} hp={hp_s} foes={len(objs.enemies)} "
+                    f"xp={len(objs.xp)}", (120, 1060), cv2.FONT_HERSHEY_SIMPLEX, 1.0,
+                    (255, 255, 255), 2)
+        folder = self._debug_dir / "overlay"
+        folder.mkdir(parents=True, exist_ok=True)
+        cv2.imwrite(str(folder / f"ov_{time.strftime('%H%M%S')}.jpg"), vis,
+                    [cv2.IMWRITE_JPEG_QUALITY, 80])
 
     def _save_levelup(self, img) -> None:
         """Keep level-up screens (small JPEGs) to verify and improve the card reader."""
@@ -153,6 +178,9 @@ class Bot:
         frames, fps_t0, fps = 0, time.monotonic(), 0.0
         run_started: float | None = None
         told_waiting: set[Screen] = set()
+        screen_since = 0.0
+        last_overlay = 0.0
+        last_levelup: levelup.LevelUp | None = None
 
         while not self._stop.is_set():
             if _user32.GetAsyncKeyState(STOP_HOTKEY_VK) & 0x8000:
@@ -177,7 +205,12 @@ class Bot:
                 was_foreground = True
 
             rect = window.client_rect(hwnd)
-            img = capturer.grab(hwnd)
+            try:
+                img = capturer.grab(hwnd)
+            except CaptureError as exc:
+                self._log(f"Capture failed ({exc}); retrying.")
+                time.sleep(1.0)
+                continue
             screen, _ = vision.screen(img)
             now = time.monotonic()
 
@@ -188,6 +221,7 @@ class Bot:
             if screen != last_screen:
                 self._log(f"Screen: {screen.value}")
                 told_waiting.clear()
+                screen_since = now
                 if screen == Screen.IN_RUN and run_started is None:
                     run_started = now
                 if screen in (Screen.MAIN_MENU, Screen.MISSION_SELECT):
@@ -227,6 +261,9 @@ class Bot:
                               f"xp {len(objs.xp):<3} near {near:<4} hp {hp_s}"
                               + (f"  wall: {blocked}" if blocked else ""))
                     last_report = now
+                if self.overlay_every and now - last_overlay > self.overlay_every:
+                    self._save_overlay(img, objs, decision, hp)
+                    last_overlay = now
             elif screen == Screen.GAME_OVER and run_started is not None:
                 survived = int(now - run_started)
                 self._log(f"GAME OVER after ~{survived // 60}:{survived % 60:02d} of play.")
@@ -234,24 +271,29 @@ class Bot:
             elif screen == Screen.LEVEL_UP:
                 if not s.pick_level_ups:
                     wait_for_user(f"'{LABELS['pick_level_ups']}' is off")
-                elif menu_ready:
-                    # A first click highlights the card; if the screen is still there
-                    # 1.5 s later, the next click confirms it. The choice is
-                    # deterministic, so both clicks hit the same card.
+                else:
+                    # The cards fade and slide in, so only act once two frames
+                    # >1 s into the screen read the same (or after 4 s regardless).
                     state = levelup.read(img)
-                    card = levelup.choose(state)
-                    if screen not in told_waiting:  # once per level-up screen
-                        self._save_levelup(img)
-                        offered = ", ".join(c.kind for c in state.cards) or "unreadable"
-                        self._log(f"Level up: offered [{offered}], own {state.weapons} "
-                                  f"weapons / {state.passives} passives.")
-                        told_waiting.add(screen)
-                    index = card.index if card else 0
-                    x, y = levelup.CARD_CENTERS[index]
-                    self._log(f"Level up: taking card {index + 1}"
-                              + (f" ({card.kind})." if card else " (fallback)."))
-                    inputs.click(rect.left + x, rect.top + y)
-                    last_action = now
+                    settled = (now - screen_since > 1.0 and state == last_levelup
+                               and bool(state.cards))
+                    last_levelup = state
+                    if (settled or now - screen_since > 4.0) and menu_ready:
+                        card = levelup.choose(state)
+                        if screen not in told_waiting:  # once per level-up screen
+                            self._save_levelup(img)
+                            offered = ", ".join(c.kind for c in state.cards) or "unreadable"
+                            self._log(f"Level up: offered [{offered}], own {state.weapons} "
+                                      f"weapons / {state.passives} passives.")
+                            told_waiting.add(screen)
+                        # First click highlights the card, a second click 1.5 s later
+                        # (if the screen is still open) confirms the same card.
+                        index = card.index if card else 0
+                        x, y = levelup.CARD_CENTERS[index]
+                        self._log(f"Level up: taking card {index + 1}"
+                                  + (f" ({card.kind})." if card else " (fallback)."))
+                        inputs.click(rect.left + x, rect.top + y)
+                        last_action = now
             elif screen == Screen.WARGEAR:
                 if not s.open_chests:
                     wait_for_user(f"'{LABELS['open_chests']}' is off")

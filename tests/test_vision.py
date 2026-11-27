@@ -43,3 +43,15 @@ def test_steering_walks_towards_safe_xp() -> None:
     px, py = PLAYER_POS
     objs = Objects(xp=[(px, py - 200)])
     assert Steering().decide(objs).direction == "up"
+
+
+def test_steering_engages_distant_enemy_when_healthy() -> None:
+    px, py = PLAYER_POS
+    objs = Objects(enemies=[(px + 450, py, 400)])
+    assert Steering().decide(objs, health=0.9).direction == "right"
+
+
+def test_steering_does_not_engage_when_hurt() -> None:
+    px, py = PLAYER_POS
+    objs = Objects(enemies=[(px + 450, py, 400)])
+    assert "right" not in Steering().decide(objs, health=0.3).direction

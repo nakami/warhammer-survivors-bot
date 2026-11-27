@@ -59,6 +59,9 @@ _MATCH_THRESHOLD = 0.8
 ENEMY_HSV = ((115, 60, 30), (165, 255, 200))
 XP_BLUE_HSV = ((92, 140, 80), (108, 255, 255))
 XP_GREY_HSV = ((0, 0, 60), (180, 35, 170))
+GROUND_HSV = ((4, 100, 80), (16, 200, 200))   # the orange-brown wasteland floor
+WALL_HSV = ((22, 30, 30), (55, 175, 150))     # olive-green walls and bunkers
+OBSTACLE_SCALE = 4  # obstacle mask is computed at 1/4 resolution
 
 # Regions ignored for object detection: (x0, y0, x1, y1)
 _IGNORE = [
@@ -82,6 +85,19 @@ def _load_templates() -> dict[Screen, np.ndarray]:
 class Objects:
     enemies: list[tuple[int, int, int]] = field(default_factory=list)  # x, y, area
     xp: list[tuple[int, int]] = field(default_factory=list)
+    # Walls/buildings at 1/OBSTACLE_SCALE resolution (uint8, 255 = blocked), if computed.
+    obstacles: np.ndarray | None = None
+
+    def blocked_at(self, x: float, y: float, radius: int = 12) -> float:
+        """Fraction of obstacle pixels in a small box around full-res (x, y)."""
+        if self.obstacles is None:
+            return 0.0
+        sx, sy, r = int(x) // OBSTACLE_SCALE, int(y) // OBSTACLE_SCALE, max(1, radius // OBSTACLE_SCALE)
+        h, w = self.obstacles.shape
+        if not (0 <= sx < w and 0 <= sy < h):
+            return 0.0
+        box = self.obstacles[max(0, sy - r):sy + r + 1, max(0, sx - r):sx + r + 1]
+        return float(box.mean()) / 255.0
 
 
 class Vision:
@@ -123,14 +139,44 @@ class Vision:
             if area >= 120:
                 out.enemies.append((int(cents[i][0]), int(cents[i][1]), area))
 
-        xp = self._mask(hsv, XP_BLUE_HSV) | self._mask(hsv, XP_GREY_HSV)
+        ground = cv2.inRange(hsv, GROUND_HSV[0], GROUND_HSV[1])
+        grey = self._mask(hsv, XP_GREY_HSV)
+        xp = self._mask(hsv, XP_BLUE_HSV) | grey
         xp = cv2.morphologyEx(xp, cv2.MORPH_OPEN, self._kernel)
         n, _, stats, cents = cv2.connectedComponentsWithStats(xp)
         for i in range(1, n):
             area = stats[i, cv2.CC_STAT_AREA]
             w, h = stats[i, cv2.CC_STAT_WIDTH], stats[i, cv2.CC_STAT_HEIGHT]
-            if 40 <= area <= 600 and w <= 40 and h <= 40:  # skull-sized blobs only
+            if not (25 <= area <= 600 and w <= 40 and h <= 40):  # skull-sized blobs only
+                continue
+            # Real pickups lie on open ground; rivets/metal on walls and bunkers do not.
+            x0, y0 = stats[i, cv2.CC_STAT_LEFT], stats[i, cv2.CC_STAT_TOP]
+            ring = ground[max(0, y0 - 12):y0 + h + 12, max(0, x0 - 12):x0 + w + 12]
+            if ring.size and ring.mean() / 255.0 >= 0.25:
                 out.xp.append((int(cents[i][0]), int(cents[i][1])))
+
+        out.obstacles = self._obstacles(hsv)
+        out.xp = [(x, y) for x, y in out.xp if out.blocked_at(x, y, radius=16) == 0.0]
+        return out
+
+    def _obstacles(self, hsv: np.ndarray) -> np.ndarray:
+        """Walls and bunkers: large olive-green surfaces.
+
+        Grey is deliberately not used: walkable concrete floors are grey too.
+        Grey buildings are handled by the motion-based stuck detection instead.
+        """
+        k = OBSTACLE_SCALE
+        small = cv2.resize(hsv, None, fx=1 / k, fy=1 / k, interpolation=cv2.INTER_NEAREST)
+        mask = cv2.inRange(small, WALL_HSV[0], WALL_HSV[1])
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
+        # Keep only large regions: walls/buildings, not skulls, sprites or sparks.
+        n, labels, stats, _ = cv2.connectedComponentsWithStats(mask)
+        keep = np.zeros(n, np.uint8)
+        keep[1:][stats[1:, cv2.CC_STAT_AREA] >= 120] = 255
+        out = keep[labels]
+        # Never treat the player's own sprite as an obstacle.
+        px, py = PLAYER_POS
+        out[(py - 60) // k:(py + 60) // k, (px - 40) // k:(px + 40) // k] = 0
         return out
 
     @staticmethod

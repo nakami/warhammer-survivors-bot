@@ -36,8 +36,16 @@ Observations gathered by playing the game through the bot's own interface
   after posting `WM_ACTIVATE` + `WM_SETFOCUS`, and posted `WM_LBUTTONDOWN/UP`
   on the Resume button. None had any effect (the game most likely reads
   keyboard and mouse via Raw Input while focused only).
-- Next option: a virtual XInput controller. The ViGEmBus driver is already
-  installed on the dev machine; this needs the `vgamepad` package.
+- **A virtual XInput controller does not work in the background either**
+  (ViGEmBus + `vgamepad`, verified with `XInputGetState`). The game detects
+  the controller while unfocused (button hints switch to gamepad icons) but
+  ignores its button presses until the window is focused. With focus, the
+  virtual controller works.
+- When a controller that the game is using disconnects, the game shows a
+  "Player disconnected – Please reconnect the controller" dialog.
+- Conclusion: on a shared desktop the game only accepts input while focused.
+  Real background play needs the game on its own desktop session (second
+  PC or a VM), or modifying the game, which this project rules out.
 
 ## Screen flow
 

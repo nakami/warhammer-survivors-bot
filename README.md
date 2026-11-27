@@ -34,9 +34,14 @@ python -m warhammer_survivors_bot
   movement, level-up picks, opening wargear chests, starting the next run
   automatically, and buying enhancements (off by default; not implemented yet).
 - The status panel and log show what the bot sees and does.
-- The bot only sends input while the game window is in the foreground. Keep
-  the control window beside the game (it places itself there), because the bot
-  reads the screen and anything covering the game hides it.
+- **The game must stay focused while the bot plays.** The game ignores
+  keyboard, mouse and controller input while it is not the active window (see
+  [docs/game-notes.md](docs/game-notes.md)). When you switch to another
+  window, the bot releases all keys and waits; click the game to resume. Note
+  that the game itself keeps running unfocused, so pause it (or stop the bot,
+  which pauses it) before switching away mid-run.
+- The bot captures the game window directly, so other windows covering it do
+  not disturb what it sees (minimizing does).
 - Screens the bot does not recognise are left alone, and a screenshot is saved
   to `screenshots/`.
 

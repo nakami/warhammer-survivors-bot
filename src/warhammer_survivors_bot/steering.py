@@ -29,12 +29,18 @@ DIRECTIONS: dict[str, tuple[float, float]] = {
     "down-left": (-0.707, 0.707), "down-right": (0.707, 0.707),
 }
 
-LOOKAHEAD = (60.0, 140.0)   # px ahead the player is assumed to be
-DANGER_RADIUS = 130.0       # scale of enemy repulsion
+LOOKAHEAD = (60.0, 140.0, 240.0)  # px ahead the player is assumed to be
+DANGER_RADIUS = 100.0       # scale of enemy repulsion
 TARGET_WEIGHT = 1.5         # reward for closing in on the target pickup
 TARGET_SAFETY = 160.0       # pickups with enemies closer than this are skipped
 CONTINUITY = 0.25           # bonus for keeping the current direction
 BLOCKED_PENALTY = 5.0
+ENGAGE_DISTANCE = 180.0     # preferred distance to the nearest enemy when hunting
+ENGAGE_WEIGHT = 0.8
+ENGAGE_MIN_HEALTH = 0.5
+WALL_PENALTY = 6.0
+WALL_PROBES = (35.0, 60.0, 90.0)   # px along a direction checked for walls
+FEET_OFFSET = 25                   # the sprite's feet are below the screen center
 BLOCKED_SECONDS = 1.2
 
 
@@ -101,13 +107,41 @@ class Steering:
         for gx, gy in objs.xp:
             if any(math.hypot(ex - gx, ey - gy) < TARGET_SAFETY for ex, ey, _ in objs.enemies):
                 continue
+            if not Steering._clear_path(objs, (px, py + FEET_OFFSET), (gx, gy)):
+                continue
             d = math.hypot(gx - px, gy - py)
             if d < best_d:
                 best, best_d = (gx, gy), d
         return best
 
+    @staticmethod
+    def _clear_path(objs: Objects, start: tuple[float, float], end: tuple[float, float]) -> bool:
+        """True if no wall lies on the straight line between two points."""
+        dist = math.hypot(end[0] - start[0], end[1] - start[1])
+        steps = max(1, int(dist // 30))
+        for i in range(1, steps + 1):
+            t = i / steps
+            x = start[0] + (end[0] - start[0]) * t
+            y = start[1] + (end[1] - start[1]) * t
+            if objs.blocked_at(x, y, radius=8) > 0.3:
+                return False
+        return True
+
+    @staticmethod
+    def wall_ahead(objs: Objects, dx: float, dy: float) -> float:
+        """0..1: how strongly a wall blocks moving in direction (dx, dy)."""
+        if not (dx or dy):
+            return 0.0
+        px, py = PLAYER_POS
+        worst = 0.0
+        for d in WALL_PROBES:
+            frac = objs.blocked_at(px + dx * d, py + FEET_OFFSET + dy * d, radius=14)
+            worst = max(worst, frac * (1.0 if d < 70 else 0.5))
+        return worst
+
     def _score(self, name: str, objs: Objects, target: tuple[int, int] | None,
-               blocked: list[str], caution: float = 1.0) -> float:
+               blocked: list[str], caution: float = 1.0,
+               engage: tuple[int, int] | None = None) -> float:
         dx, dy = DIRECTIONS[name]
         px, py = PLAYER_POS
         total = 0.0
@@ -121,10 +155,20 @@ class Steering:
                 d0 = math.hypot(target[0] - px, target[1] - py)
                 d1 = math.hypot(target[0] - qx, target[1] - qy)
                 total += TARGET_WEIGHT * (d0 - d1) / ahead
+            elif engage is not None:
+                # Close in to ENGAGE_DISTANCE (not closer) so the weapons can hit.
+                e0 = abs(math.hypot(engage[0] - px, engage[1] - py) - ENGAGE_DISTANCE)
+                e1 = abs(math.hypot(engage[0] - qx, engage[1] - qy) - ENGAGE_DISTANCE)
+                total += ENGAGE_WEIGHT * (e0 - e1) / ahead
+        # Standing still is only fine when nothing is close.
+        if name == "stay" and any(
+                math.hypot(ex - px, ey - py) < 250 for ex, ey, _ in objs.enemies):
+            total -= 1.0
         if name == self.previous:
             total += CONTINUITY
         if name in blocked:
             total -= BLOCKED_PENALTY
+        total -= WALL_PENALTY * self.wall_ahead(objs, dx, dy)
         return total
 
     def decide(self, objs: Objects, now: float | None = None,
@@ -133,7 +177,12 @@ class Steering:
         caution = 1.0 if health is None else 1.0 + 2.0 * max(0.0, 0.6 - health) / 0.6
         target = self._pick_target(objs)
         blocked = self.blocked(now)
-        scores = {name: self._score(name, objs, target, blocked, caution)
+        px, py = PLAYER_POS
+        engage = None
+        if target is None and objs.enemies and (health is None or health >= ENGAGE_MIN_HEALTH):
+            ex, ey, _ = min(objs.enemies, key=lambda e: math.hypot(e[0] - px, e[1] - py))
+            engage = (ex, ey)
+        scores = {name: self._score(name, objs, target, blocked, caution, engage)
                   for name in DIRECTIONS}
         best = max(scores, key=scores.__getitem__)
         self.previous = best
