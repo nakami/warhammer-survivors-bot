@@ -28,7 +28,7 @@ _STATUS_FIELDS = [
 class App:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
-        root.title(f"Warhammer Survivors Bot v{__version__}")
+        root.title(_TITLE)
         root.geometry(self._initial_geometry())
         root.attributes("-topmost", True)  # stay visible above the game window
 
@@ -188,7 +188,35 @@ class App:
         self.root.after(250, self._poll)
 
 
+_MUTEX_NAME = "Local\\WarhammerSurvivorsBotControlWindow"
+_TITLE = f"Warhammer Survivors Bot v{__version__}"
+
+
+def _claim_single_instance():
+    """Return a mutex handle if this is the only control window, else None.
+
+    Two windows could each start a bot and each plug in a virtual controller,
+    which would fight over the game.
+    """
+    import ctypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateMutexW.restype = ctypes.c_void_p
+    handle = kernel32.CreateMutexW(None, False, _MUTEX_NAME)
+    if ctypes.get_last_error() == 183:  # ERROR_ALREADY_EXISTS
+        kernel32.CloseHandle(ctypes.c_void_p(handle))
+        return None
+    return handle  # kept open (and held) until the process exits
+
+
 def main() -> None:
+    mutex = _claim_single_instance()
+    if mutex is None:
+        existing = window.find_window(_TITLE, "python.exe")
+        if existing:
+            window.focus(existing)
+        print("The control window is already open; brought it to the front.")
+        return
     root = tk.Tk()
     App(root)
     root.mainloop()
