@@ -2,16 +2,22 @@
 
 from __future__ import annotations
 
+import os
 import queue
 import time
 import tkinter as tk
 from tkinter import scrolledtext, ttk
 
-from warhammer_survivors_bot import __version__, window
+from warhammer_survivors_bot import __version__, runstate, window
 from warhammer_survivors_bot.bot import Bot
 from warhammer_survivors_bot.settings import LABELS, Settings
 
-_WIDTH, _HEIGHT = 540, 760
+_WIDTH, _HEIGHT = 540, 820
+
+# Banner colours (background, foreground).
+_IDLE = ("#e0e0e0", "#404040")
+_OWN = ("#2e7d32", "#ffffff")       # running, started from this window
+_EXTERNAL = ("#e65100", "#ffffff")  # running, started elsewhere (test run)
 
 _STATUS_FIELDS = [
     ("state", "State"), ("direction", "Moving"), ("enemies", "Enemies"),
@@ -30,7 +36,8 @@ class App:
         self.settings = Settings.load()
         self.bot = Bot(log=lambda m: self._events.put(("log", m)),
                        status=lambda s: self._events.put(("status", s)),
-                       settings=self.settings)
+                       settings=self.settings, source="control window")
+        self._external_pid: int | None = None
 
         top = ttk.Frame(root, padding=8)
         top.pack(fill="x")
@@ -39,6 +46,17 @@ class App:
         self.stop_btn = ttk.Button(top, text="Stop", command=self.stop, state="disabled")
         self.stop_btn.pack(side="left", padx=6)
         ttk.Label(top, text="Hotkey: F8 stops the bot").pack(side="right")
+
+        # Banner: is a bot running, and was it started here or by a script/test?
+        banner = tk.Frame(root, bg=_IDLE[0])
+        banner.pack(fill="x", padx=8, pady=(0, 8))
+        self._banner = banner
+        self._banner_text = tk.Label(banner, text="No bot running", bg=_IDLE[0], fg=_IDLE[1],
+                                     font=("Segoe UI", 10, "bold"), anchor="w",
+                                     justify="left", padx=8, pady=6, wraplength=400)
+        self._banner_text.pack(side="left", fill="x", expand=True)
+        self._stop_external_btn = ttk.Button(banner, text="Stop test run",
+                                             command=self.stop_external)
 
         features = ttk.LabelFrame(root, text="Features (apply immediately)", padding=8)
         features.pack(fill="x", padx=8, pady=(0, 8))
@@ -110,6 +128,31 @@ class App:
     def stop(self) -> None:
         self.bot.stop()
 
+    def stop_external(self) -> None:
+        if self._external_pid is not None:
+            runstate.request_stop(self._external_pid)
+            self._append(f"Asked the test run (PID {self._external_pid}) to stop.")
+
+    def _update_banner(self) -> None:
+        run = runstate.current()
+        if self.bot.running:
+            colors, text, external = _OWN, "Bot running (started from this window)", None
+        elif run and run["pid"] != os.getpid():
+            since = time.strftime("%H:%M:%S", time.localtime(run["started"]))
+            colors = _EXTERNAL
+            text = (f"TEST RUN in progress: {run['source']}\n"
+                    f"PID {run['pid']} | since {since} | screen: {run['state']}")
+            external = run["pid"]
+        else:
+            colors, text, external = _IDLE, "No bot running", None
+        self._banner.configure(bg=colors[0])
+        self._banner_text.configure(text=text, bg=colors[0], fg=colors[1])
+        if external and self._external_pid is None:
+            self._stop_external_btn.pack(side="right", padx=6, before=self._banner_text)
+        elif not external and self._external_pid is not None:
+            self._stop_external_btn.pack_forget()
+        self._external_pid = external
+
     def close(self) -> None:
         self.bot.stop()
         self.root.after(300, self.root.destroy)
@@ -137,10 +180,12 @@ class App:
             for key, value in latest_status.items():
                 if key in self._vars:
                     self._vars[key].set("-" if value is None else str(value))
+        self._update_banner()
         if not self.bot.running:
-            self.start_btn.configure(state="normal")
+            # Never start a second bot while a test run controls the game.
+            self.start_btn.configure(state="disabled" if self._external_pid else "normal")
             self.stop_btn.configure(state="disabled")
-        self.root.after(100, self._poll)
+        self.root.after(250, self._poll)
 
 
 def main() -> None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ctypes
+import os
 import threading
 import time
 from collections.abc import Callable
@@ -10,7 +11,7 @@ from pathlib import Path
 
 import cv2
 
-from warhammer_survivors_bot import levelup, window
+from warhammer_survivors_bot import levelup, runstate, window
 from warhammer_survivors_bot.capture import CaptureError, Capturer
 from warhammer_survivors_bot.controls import Controller, KeyboardMouse
 from warhammer_survivors_bot.settings import LABELS, Settings
@@ -40,7 +41,11 @@ Status = Callable[[dict], None]
 class Bot:
     def __init__(self, log: Log = print, status: Status = lambda s: None,
                  debug_dir: Path = Path("screenshots"),
-                 settings: Settings | None = None, overlay_every: float = 0.0) -> None:
+                 settings: Settings | None = None, overlay_every: float = 0.0,
+                 source: str = "script") -> None:
+        # Who started this bot; shown by the control window ("control window"
+        # for its own runs, anything else is displayed as a test/script run).
+        self.source = source
         # Save an annotated frame every N seconds during runs (0 = off); for tuning.
         self.overlay_every = overlay_every
         # Read on every frame, so toggles take effect while the bot is running.
@@ -150,10 +155,18 @@ class Bot:
                 self._pause_if_in_run()
             finally:
                 self.controls.close()
+                runstate.clear()
                 self._status({"state": "stopped"})
                 self._log("Bot stopped.")
 
     def _loop(self) -> None:
+        other = runstate.current()
+        if other and other["pid"] != os.getpid():
+            self._log(f"Another bot is already running ({other['source']}, PID "
+                      f"{other['pid']}); not starting a second one.")
+            return
+        started_wall = time.time()
+        runstate.heartbeat(self.source, started_wall, "starting")
         self._log("Bot started. Press F8 or Stop to halt.")
         if window.find_window() is None:
             self._log("Game window not found. Start the game first.")
@@ -176,8 +189,16 @@ class Bot:
         screen_since = 0.0
         last_overlay = 0.0
         last_levelup: levelup.LevelUp | None = None
+        last_beat = 0.0
+        beat_state = "starting"
 
         while not self._stop.is_set():
+            if time.monotonic() - last_beat > 0.5:
+                runstate.heartbeat(self.source, started_wall, beat_state)
+                last_beat = time.monotonic()
+                if runstate.stop_requested():
+                    self._log("Stop requested from the control window.")
+                    break
             if _user32.GetAsyncKeyState(STOP_HOTKEY_VK) & 0x8000:
                 self._log("F8 pressed.")
                 break
@@ -227,6 +248,7 @@ class Bot:
                 unknown_saved = False
 
             status = {"state": screen.value, "fps": round(fps, 1)}
+            beat_state = screen.value
             menu_ready = now - last_action > 1.5
             s = self.settings
 

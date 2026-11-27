@@ -35,6 +35,10 @@ python -m warhammer_survivors_bot
   automatically, buying enhancements (off by default; not implemented yet), and
   saving annotated debug frames to `screenshots/overlay/` (off by default).
 - The status panel and log show what the bot sees and does.
+- A banner shows whether a bot is running: green when started from this window,
+  **orange "TEST RUN"** when a bot was started elsewhere (e.g. a test run from a
+  script). During a test run, Start is disabled (only one bot may control the
+  game) and **Stop test run** asks that run to stop.
 - **Background mode** (checkbox, applies on Start) lets you keep using your
   PC while the bot plays. The game ignores keyboard, mouse and controller input
   whenever it is not the active window, so this mode
