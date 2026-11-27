@@ -11,7 +11,7 @@ from pathlib import Path
 
 import cv2
 
-from warhammer_survivors_bot import levelup, runstate, window
+from warhammer_survivors_bot import enhance, levelup, runstate, window
 from warhammer_survivors_bot.capture import CaptureError, Capturer
 from warhammer_survivors_bot.controls import Controller, KeyboardMouse
 from warhammer_survivors_bot.settings import LABELS, Settings
@@ -191,6 +191,9 @@ class Bot:
         last_levelup: levelup.LevelUp | None = None
         last_beat = 0.0
         beat_state = "starting"
+        shop_done = False          # finished buying for this shop visit
+        shop_bought = 0
+        shop_pending: tuple[str, object, float] | None = None  # name, ranks before, time
 
         while not self._stop.is_set():
             if time.monotonic() - last_beat > 0.5:
@@ -239,6 +242,7 @@ class Bot:
                 self._log(f"Screen: {screen.value}")
                 told_waiting.clear()
                 screen_since = now
+                shop_done, shop_bought, shop_pending = False, 0, None
                 if screen == Screen.IN_RUN and run_started is None:
                     run_started = now
                 if screen in (Screen.MAIN_MENU, Screen.MISSION_SELECT):
@@ -283,6 +287,10 @@ class Bot:
                 if every and now - last_overlay > every:
                     self._save_overlay(img, objs, decision, hp)
                     last_overlay = now
+            elif screen == Screen.EQUIPMENT_LIST and menu_ready:
+                self._log("'Full Equipment List' is open: closing it.")
+                ctl.back()
+                last_action = now
             elif screen == Screen.DISCONNECTED and menu_ready:
                 self._log("'Player disconnected' dialog: closing it.")
                 ctl.confirm()
@@ -328,17 +336,46 @@ class Bot:
                 self._log("Game is paused: resuming.")
                 ctl.resume()
                 last_action = now
+            elif screen == Screen.ENHANCEMENTS and s.buy_enhancements and not shop_done:
+                if shop_pending is not None:
+                    # Only count a purchase once the item's rank squares changed.
+                    name, before, t_buy = shop_pending
+                    r, c = enhance.POSITION[name]
+                    # One extra filled rank square changes the patch by ~1.25 on
+                    # average; an untouched cell stays at exactly 0.
+                    changed = cv2.absdiff(enhance.ranks_patch(img, r, c), before).mean() > 0.5
+                    if changed:
+                        shop_bought += 1
+                        self._log(f"Enhancements: bought a rank of {name}.")
+                        shop_pending = None
+                        last_action = now
+                    elif now - t_buy > 2.0:
+                        self._log(f"Enhancements: buying {name} had no visible effect; "
+                                  "not buying anything else this time.")
+                        self._save_debug(img, "shop_unconfirmed")
+                        shop_done, shop_pending = True, None
+                elif now - last_action > 0.4 and now - screen_since > 1.0:
+                    shop = enhance.read(img)
+                    target = enhance.next_purchase(shop)
+                    if target is None or shop_bought >= enhance.MAX_PURCHASES_PER_VISIT:
+                        self._log(f"Enhancements: done shopping ({shop_bought} rank(s) bought).")
+                        shop_done = True
+                    elif shop.selected != (target.row, target.col):
+                        ctl.shop_select((target.row, target.col), shop.selected,
+                                        enhance.center(target.row, target.col))
+                        last_action = now
+                    else:
+                        before = enhance.ranks_patch(img, target.row, target.col).copy()
+                        ctl.buy_rank()
+                        shop_pending = (target.name, before, now)
+                        last_action = now
             elif screen == Screen.ENHANCEMENTS:
-                if s.buy_enhancements:
-                    # Not implemented yet: purchases need an affordable upgrade to be
-                    # observed first. Never guess when spending the player's coins.
-                    wait_for_user("buying enhancements is not implemented yet")
-                elif not s.auto_restart:
+                if not s.auto_restart:
                     wait_for_user(f"'{LABELS['auto_restart']}' is off")
                 elif menu_ready:
                     # Confirm = "Finish", then confirm the "End Recap" dialog. Never
                     # anything else here (on a controller, Y would refund everything).
-                    self._log("Enhancements: finishing without buying.")
+                    self._log("Enhancements: finishing.")
                     ctl.confirm()
                     last_action = now
             elif screen in _MENU_ACTIONS:

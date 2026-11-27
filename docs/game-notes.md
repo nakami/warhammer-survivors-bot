@@ -75,6 +75,22 @@ Observations gathered by playing the game through the bot's own interface
   active. Affordable prices are white, unaffordable red.
 - If the controller disconnects, a "Player disconnected" dialog appears
   (A/Enter closes it).
+- Pause menu Y (Quit) asks "Are you sure you want to quit this run? Any
+  completed objectives will be saved." (A Confirm / B Cancel) and leads to
+  the Recap.
+
+## Enhancements shop
+
+- 4-column grid; rows 1-3: Strength/Save/Reload/Wounds,
+  Toughness/Sustain/Range/Attacks, Skill/Move/Aura/Chance; row 4 (needs
+  scrolling): Veterancy/Tithe/Corruption/Redeployment, more below.
+- Each cell: name, price with a coin icon (red = not affordable) or "MAX",
+  rank squares. The selected cell has a brighter border.
+- D-pad moves the selection; RB (keyboard E) buys a rank, LB (Q) removes one.
+- After every purchase **all** prices rise (e.g. buying Strength for 416 made
+  Wounds go from 416 to 438), so the screen has to be re-read each time.
+- A bought rank fills one more square: about 1.25 mean pixel difference over
+  the cell's rank area, untouched cells stay at 0.
 
 ## Screen flow
 

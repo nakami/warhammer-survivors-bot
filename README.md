@@ -32,8 +32,14 @@ python -m warhammer_survivors_bot
   a run, it pauses the game.
 - **Features** toggle parts of the bot while it runs (saved to `settings.json`):
   movement, level-up picks, opening wargear chests, starting the next run
-  automatically, buying enhancements (off by default; not implemented yet), and
+  automatically, buying enhancements (off by default; see below), and
   saving annotated debug frames to `screenshots/overlay/` (off by default).
+- **Buying enhancements** (off by default): after a run the bot spends coins in
+  the Enhancements shop, highest priority first: Attacks, Strength, Wounds,
+  Save, Reload, Toughness, Range, Move, Aura, Chance, Sustain, Skill. It only
+  looks at the first three rows, so it never buys Corruption (makes the game
+  harder) and never presses Refund All; at most 10 ranks per visit, and each
+  purchase must be visible on screen or it stops buying.
 - The status panel and log show what the bot sees and does.
 - A banner shows whether a bot is running: green when started from this window,
   **orange "TEST RUN"** when a bot was started elsewhere (e.g. a test run from a

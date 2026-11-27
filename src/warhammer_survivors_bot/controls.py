@@ -67,6 +67,9 @@ class KeyboardMouse:
     def confirm(self) -> None:
         inputs.press("enter")
 
+    def back(self) -> None:
+        inputs.press("esc")
+
     def pause(self) -> None:
         inputs.press("esc")
 
@@ -95,6 +98,15 @@ class KeyboardMouse:
         Returns True when an action that may confirm the card was sent."""
         self._click(centers[index])
         return True
+
+    def shop_select(self, target: tuple[int, int], selected: tuple[int, int] | None,
+                    center: tuple[int, int]) -> None:
+        """Select an Enhancements cell (keyboard/mouse: click it)."""
+        self._click(center)
+
+    def buy_rank(self) -> None:
+        """'+' on the selected Enhancement (the game shows E for it)."""
+        inputs.press("e")  # layout-aware: the key that types 'e'
 
 
 class Controller:
@@ -158,6 +170,9 @@ class Controller:
     def confirm(self) -> None:
         self._tap("A")
 
+    def back(self) -> None:
+        self._tap("B")
+
     def pause(self) -> None:
         self._tap("START")
 
@@ -172,6 +187,19 @@ class Controller:
 
     def main_menu_start(self) -> None:
         self._tap("A")
+
+    def shop_select(self, target: tuple[int, int], selected: tuple[int, int] | None,
+                    center: tuple[int, int]) -> None:
+        """Move the Enhancements selection one cell towards the target."""
+        from warhammer_survivors_bot.enhance import step_towards
+
+        step = "LEFT" if selected is None else step_towards(selected, target)
+        if step:
+            self._tap(f"DPAD_{step}")
+
+    def buy_rank(self) -> None:
+        """'+' on the selected Enhancement (RB on a controller)."""
+        self._tap("RIGHT_SHOULDER")
 
     def select_card(self, index: int, highlighted: int | None, centers) -> bool:
         """Move the highlight one step towards the card, or press A when on it.

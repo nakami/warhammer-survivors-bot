@@ -32,6 +32,7 @@ class Screen(Enum):
     RECAP = "recap"
     ENHANCEMENTS = "enhancements"
     WARGEAR = "wargear"  # chest dialog: "Wargear Acquired!" -> opening -> Accept
+    EQUIPMENT_LIST = "equipment_list"  # "Full Equipment List" overlay (B / Esc closes)
     OBJECTIVES = "objectives"  # "Completed Objectives" after a run
     DISCONNECTED = "disconnected"  # "Player disconnected" dialog (controller went away)
 
@@ -41,6 +42,7 @@ class Screen(Enum):
 # because the in-run HUD stays visible underneath them.
 _TEMPLATE_POS: dict[Screen, tuple[int, int]] = {
     Screen.DISCONNECTED: (805, 452),
+    Screen.EQUIPMENT_LIST: (810, 152),
     Screen.LEVEL_UP: (850, 140),
     Screen.PAUSED: (875, 135),
     Screen.WARGEAR: (885, 110),
@@ -121,6 +123,11 @@ class Vision:
             region = img[max(0, y - m): y + th + m, max(0, x - m): x + tw + m]
             score = float(cv2.matchTemplate(region, tpl, cv2.TM_CCOEFF_NORMED).max())
             if score >= _MATCH_THRESHOLD:
+                # The in-run HUD stays visible (dimmed) under every overlay, and the
+                # match score ignores brightness: only count it as "in run" when the
+                # pause button is at full brightness (max 255 vs <= 71 when dimmed).
+                if screen == Screen.IN_RUN and int(region.max()) < 150:
+                    continue
                 return screen, score
         return Screen.UNKNOWN, 0.0
 
