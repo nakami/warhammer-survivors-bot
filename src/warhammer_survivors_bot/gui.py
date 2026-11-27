@@ -8,16 +8,25 @@ import time
 import tkinter as tk
 from tkinter import scrolledtext, ttk
 
-from warhammer_survivors_bot import __version__, runstate, window
+from warhammer_survivors_bot import __version__, risk, runstate, window
 from warhammer_survivors_bot.bot import Bot
+from warhammer_survivors_bot.gui_charts import LiveChart
+from warhammer_survivors_bot.runlog import RunHistory
 from warhammer_survivors_bot.settings import LABELS, Settings
 
-_WIDTH, _HEIGHT = 540, 820
+_WIDTH, _HEIGHT = 540, 1000
 
 # Banner colours (background, foreground).
 _IDLE = ("#e0e0e0", "#404040")
 _OWN = ("#2e7d32", "#ffffff")       # running, started from this window
 _EXTERNAL = ("#e65100", "#ffffff")  # running, started elsewhere (test run)
+
+# Run table: (key, heading, width px, anchor)
+_RUN_COLUMNS = [
+    ("started", "Started", 86, "w"), ("play", "Play", 46, "e"), ("level", "Level", 44, "e"),
+    ("chests", "Chests", 50, "e"), ("hits", "Hits", 40, "e"), ("minhp", "Min HP", 52, "e"),
+    ("risk", "Risk", 44, "e"), ("bought", "Bought", 52, "e"), ("end", "End", 40, "center"),
+]
 
 _STATUS_FIELDS = [
     ("state", "State"), ("direction", "Moving"), ("enemies", "Enemies"),
@@ -68,8 +77,31 @@ class App:
                 row=i, column=0, sticky="w")
             self._feature_vars[name] = var
 
-        grid = ttk.LabelFrame(root, text="Status", padding=8)
-        grid.pack(fill="x", padx=8)
+        # Situation: the bot's own assessment of how dangerous the moment is.
+        situation = ttk.LabelFrame(root, text="Situation", padding=(8, 2))
+        situation.pack(fill="x", padx=8, pady=(0, 8))
+        self._mood_emoji = tk.Label(situation, text=risk.IDLE[0], font=("Segoe UI Emoji", 30))
+        self._mood_emoji.pack(side="left", padx=(0, 10))
+        right = ttk.Frame(situation)
+        right.pack(side="left", fill="x", expand=True)
+        self._mood_text = tk.StringVar(value=risk.IDLE[1])
+        ttk.Label(right, textvariable=self._mood_text,
+                  font=("Segoe UI", 12, "bold")).pack(anchor="w")
+        self._risk_bar = ttk.Progressbar(right, maximum=100, value=0, length=360)
+        self._risk_bar.pack(anchor="w", fill="x", pady=(2, 0))
+
+        # Tabs: live view, run history, log.
+        tabs = ttk.Notebook(root)
+        tabs.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+        live = ttk.Frame(tabs, padding=(0, 6, 0, 0))
+        runs_tab = ttk.Frame(tabs, padding=(0, 6, 0, 0))
+        log_tab = ttk.Frame(tabs, padding=(0, 6, 0, 0))
+        tabs.add(live, text="Live")
+        tabs.add(runs_tab, text="Last runs")
+        tabs.add(log_tab, text="Log")
+
+        grid = ttk.LabelFrame(live, text="Status", padding=8)
+        grid.pack(fill="x")
         self._vars: dict[str, tk.StringVar] = {}
         for i, (key, label) in enumerate(_STATUS_FIELDS):
             ttk.Label(grid, text=label + ":").grid(row=i // 2, column=(i % 2) * 2, sticky="w")
@@ -79,12 +111,91 @@ class App:
             self._vars[key] = var
         self._vars["state"].set("idle")
 
-        self.log = scrolledtext.ScrolledText(root, height=14, state="disabled",
+        stats = ttk.LabelFrame(live, text="Live statistics (last 3 minutes)", padding=(6, 4))
+        stats.pack(fill="x", pady=(8, 0))
+        self._chart_health = LiveChart(stats, "Health and risk", ["Health", "Risk"],
+                                       unit="%", y_max=100)
+        self._chart_health.pack(pady=(0, 4))
+        self._chart_screen = LiveChart(stats, "On screen", ["Enemies", "XP pickups"],
+                                       unit="count")
+        self._chart_screen.pack()
+        self._last_status: dict = {}
+        root.after(500, self._sample_charts)
+
+        # Last runs: one row per run, newest first (from runs.json).
+        self._history = RunHistory()
+        self._runs_mtime = None
+        self._runs = ttk.Treeview(runs_tab, columns=[c[0] for c in _RUN_COLUMNS],
+                                  show="headings", height=10)
+        for key, heading, width, anchor in _RUN_COLUMNS:
+            self._runs.heading(key, text=heading, anchor=anchor)
+            self._runs.column(key, width=width, anchor=anchor, stretch=False)
+        self._runs.pack(fill="x")
+        self._runs_note = ttk.Label(
+            runs_tab, foreground="#666666", wraplength=500, justify="left",
+            text="Play = time actually spent in the run (without level-up, chest and "
+                 "pause screens). Hits = health losses. Risk = average risk level. "
+                 "Bought = enhancement ranks bought after the run. "
+                 "† = run ended by game over, ⏸ = bot stopped during the run.")
+        self._runs_note.pack(fill="x", pady=(8, 0))
+        self._summary = tk.StringVar(value="")
+        ttk.Label(runs_tab, textvariable=self._summary, font=("Segoe UI", 9, "bold")).pack(
+            anchor="w", pady=(8, 0))
+        root.after(200, self._refresh_runs)
+
+        self.log = scrolledtext.ScrolledText(log_tab, height=10, state="disabled",
                                              font=("Consolas", 9))
-        self.log.pack(fill="both", expand=True, padx=8, pady=8)
+        self.log.pack(fill="both", expand=True)
 
         root.protocol("WM_DELETE_WINDOW", self.close)
         root.after(100, self._poll)
+
+    def _refresh_runs(self) -> None:
+        """Reload the run table when runs.json changed (also for script runs)."""
+        try:
+            mtime = self._history.path.stat().st_mtime
+        except OSError:
+            mtime = None
+        if mtime != self._runs_mtime:
+            self._runs_mtime = mtime
+            runs = self._history.last(10)
+            self._runs.delete(*self._runs.get_children())
+            for r in runs:
+                play = int(r.play_seconds)
+                end = {"game over": "†", "stopped": "⏸"}.get(r.end, "▶")
+                self._runs.insert("", "end", values=(
+                    time.strftime("%d.%m. %H:%M", time.localtime(r.started)),
+                    f"{play // 60}:{play % 60:02d}",
+                    r.level, r.chests, r.hits,
+                    "-" if r.min_health is None else f"{r.min_health:.0%}",
+                    "-" if r.avg_risk is None else f"{r.avg_risk:.0%}",
+                    r.purchases, end))
+            finished = [r for r in runs if r.end == "game over"]
+            if finished:
+                avg = sum(r.play_seconds for r in finished) / len(finished)
+                best = max(r.play_seconds for r in finished)
+                self._summary.set(
+                    f"{len(finished)} finished run(s) shown: average play time "
+                    f"{int(avg) // 60}:{int(avg) % 60:02d}, best {int(best) // 60}:"
+                    f"{int(best) % 60:02d}, average level "
+                    f"{sum(r.level for r in finished) / len(finished):.1f}")
+            else:
+                self._summary.set("")
+        self.root.after(2000, self._refresh_runs)
+
+    def _sample_charts(self) -> None:
+        """Every 0.5 s: add the latest values (gaps outside a run), redraw."""
+        if self.bot.running:
+            st = self._last_status
+            if st.get("state") == "in_run":
+                self._chart_health.add([st.get("health"), st.get("risk")])
+                self._chart_screen.add([st.get("enemies"), st.get("xp")])
+            else:
+                self._chart_health.add([None, None])
+                self._chart_screen.add([None, None])
+        self._chart_health.redraw()
+        self._chart_screen.redraw()
+        self.root.after(500, self._sample_charts)
 
     def _initial_geometry(self) -> str:
         """Place the window beside the game so it never covers what the bot sees."""
@@ -177,9 +288,19 @@ class App:
         except queue.Empty:
             pass
         if latest_status is not None:
+            self._last_status = latest_status
             for key, value in latest_status.items():
                 if key in self._vars:
                     self._vars[key].set("-" if value is None else str(value))
+            if "mood" in latest_status:
+                self._mood_emoji.configure(text=latest_status["mood"])
+                self._mood_text.set(f"{latest_status['mood_label']}  "
+                                    f"(risk {latest_status['risk']}%)")
+                self._risk_bar.configure(value=latest_status["risk"])
+            elif latest_status.get("state") == "stopped":
+                self._mood_emoji.configure(text=risk.IDLE[0])
+                self._mood_text.set(risk.IDLE[1])
+                self._risk_bar.configure(value=0)
         self._update_banner()
         if not self.bot.running:
             # Never start a second bot while a test run controls the game.

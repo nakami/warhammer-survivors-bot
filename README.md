@@ -40,6 +40,10 @@ python -m warhammer_survivors_bot
   looks at the first three rows, so it never buys Corruption (makes the game
   harder) and never presses Refund All; at most 10 ranks per visit, and each
   purchase must be visible on screen or it stops buying.
+- **Situation** shows the bot's own risk assessment as a mood emoji, a word and
+  a bar: relaxed, focused, tense, danger, critical (plus game over and not in a
+  run). The risk combines how close the nearest enemy is (damage happens below
+  ~80 px), how surrounded the character is, its health and the crowd size.
 - The status panel and log show what the bot sees and does.
 - A banner shows whether a bot is running: green when started from this window,
   **orange "TEST RUN"** when a bot was started elsewhere (e.g. a test run from a

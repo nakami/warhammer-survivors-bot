@@ -33,10 +33,16 @@ def test_wrong_resolution_is_unknown(vision: Vision) -> None:
     assert vision.screen(np.zeros((720, 1280, 3), np.uint8))[0] == Screen.UNKNOWN
 
 
-def test_steering_flees_from_enemy_on_the_right() -> None:
+def test_steering_backs_off_from_touching_enemy() -> None:
     px, py = PLAYER_POS
-    objs = Objects(enemies=[(px + 120, py, 800)])
+    objs = Objects(enemies=[(px + 60, py, 800)])  # within contact range
     assert "left" in Steering().decide(objs).direction
+
+
+def test_steering_keeps_close_but_does_not_close_in() -> None:
+    px, py = PLAYER_POS
+    objs = Objects(enemies=[(px + 120, py, 800)])  # about the engage distance
+    assert "right" not in Steering().decide(objs, health=0.9).direction
 
 
 def test_steering_walks_towards_safe_xp() -> None:
@@ -63,3 +69,29 @@ def test_standing_still_is_not_sticky() -> None:
     steering.previous = "stay"
     objs = Objects(enemies=[(px + 450, py, 400)])
     assert steering.decide(objs, health=0.9).direction != "stay"
+
+
+def test_steering_escapes_through_the_gap_when_surrounded() -> None:
+    import math
+    px, py = PLAYER_POS
+    # Enemies all around at ~150 px, except straight up (the gap).
+    enemies = []
+    for deg in range(0, 360, 20):
+        if 240 <= deg <= 300:  # screen y points down: 270 deg = up
+            continue
+        a = math.radians(deg)
+        enemies.append((int(px + 150 * math.cos(a)), int(py + 150 * math.sin(a)), 400))
+    decision = Steering().decide(Objects(enemies=enemies), health=0.9)
+    assert decision.encirclement > 0.7
+    assert decision.direction == "up"
+
+
+def test_wall_memory_blocks_a_direction_where_we_got_stuck() -> None:
+    steering = Steering()
+    steering.previous = "right"
+    for i in range(10):  # pushing right but not moving for 0.5 s
+        steering.record_motion((0.0, 0.0), now=100.0 + i * 0.05)
+    assert "right" in steering.blocked(now=100.6)
+    # Even after the short block expired, the remembered spot keeps "right" unattractive.
+    assert steering.wall_ahead(Objects(), 1.0, 0.0, now=105.0) > 0.5
+    assert steering.wall_ahead(Objects(), -1.0, 0.0, now=105.0) == 0.0

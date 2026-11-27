@@ -11,8 +11,9 @@ from pathlib import Path
 
 import cv2
 
-from warhammer_survivors_bot import enhance, levelup, runstate, window
+from warhammer_survivors_bot import enhance, levelup, risk, runstate, window
 from warhammer_survivors_bot.capture import CaptureError, Capturer
+from warhammer_survivors_bot.runlog import RunHistory, RunRecord
 from warhammer_survivors_bot.controls import Controller, KeyboardMouse
 from warhammer_survivors_bot.settings import LABELS, Settings
 from warhammer_survivors_bot.steering import DIRECTIONS, Steering
@@ -42,7 +43,12 @@ class Bot:
     def __init__(self, log: Log = print, status: Status = lambda s: None,
                  debug_dir: Path = Path("screenshots"),
                  settings: Settings | None = None, overlay_every: float = 0.0,
-                 source: str = "script") -> None:
+                 source: str = "script", telemetry: Path | None = None,
+                 record_every: float = 0.0) -> None:
+        # Tuning aids: per-frame CSV of what the bot saw/did during runs, and raw
+        # frames saved every `record_every` seconds to <debug_dir>/frames/.
+        self.telemetry = telemetry
+        self.record_every = record_every
         # Who started this bot; shown by the control window ("control window"
         # for its own runs, anything else is displayed as a test/script run).
         self.source = source
@@ -156,6 +162,10 @@ class Bot:
             finally:
                 self.controls.close()
                 runstate.clear()
+                rec = getattr(self, "_record", None)
+                if rec is not None and rec.end == "running":
+                    rec.end = "stopped"
+                    RunHistory().save(rec)
                 self._status({"state": "stopped"})
                 self._log("Bot stopped.")
 
@@ -190,6 +200,28 @@ class Bot:
         last_overlay = 0.0
         last_levelup: levelup.LevelUp | None = None
         last_beat = 0.0
+        last_record = 0.0
+        risk_level = 0.0
+        mood = risk.IDLE
+        history = RunHistory()
+        self._record: RunRecord | None = None   # summary of the current/last run
+        last_frame_t = time.monotonic()
+        last_saved = 0.0
+        prev_hp: float | None = None
+        last_chest = -100.0
+        tel = None
+        tel_path = self.telemetry
+        if tel_path is None and self.settings.record_test_data:
+            tel_path = (self._debug_dir / "telemetry"
+                        / f"session_{time.strftime('%Y%m%d-%H%M%S')}.csv")
+            tel_path.parent.mkdir(parents=True, exist_ok=True)
+            self._log(f"Recording test data to {tel_path}")
+        if tel_path is not None:
+            new = not tel_path.exists()
+            tel = open(tel_path, "a", encoding="utf-8", buffering=1)  # line-buffered
+            if new:
+                tel.write("t,hp,nearest,enemies,xp,direction,moved_x,moved_y,target_dist,"
+                          "blocked,encircle\n")
         beat_state = "starting"
         shop_done = False          # finished buying for this shop visit
         shop_bought = 0
@@ -245,12 +277,34 @@ class Bot:
                 shop_done, shop_bought, shop_pending = False, 0, None
                 if screen == Screen.IN_RUN and run_started is None:
                     run_started = now
+                    steering.reset()  # new run: forget remembered walls etc.
+                    self._record = RunRecord(source=self.source)
+                    history.save(self._record)
+                    prev_hp = None
+                rec = self._record
+                if rec is not None and rec.end == "running":
+                    if screen == Screen.LEVEL_UP:
+                        rec.level_ups += 1
+                    elif screen == Screen.WARGEAR and now - last_chest > 6.0:
+                        rec.chests += 1  # one chest shows several dialog stages
+                    elif screen == Screen.GAME_OVER:
+                        rec.end = "game over"
+                        history.save(rec)
+                    if screen == Screen.WARGEAR:
+                        last_chest = now
                 if screen in (Screen.MAIN_MENU, Screen.MISSION_SELECT):
                     run_started = None
                 last_screen = screen
                 unknown_since = now if screen == Screen.UNKNOWN else None
                 unknown_saved = False
 
+            # Situation assessment for the UI: smoothed risk while in a run.
+            if screen in (Screen.GAME_OVER, Screen.RECAP, Screen.OBJECTIVES):
+                mood, risk_level = risk.GAME_OVER, 1.0
+            elif screen in (Screen.MAIN_MENU, Screen.CHARACTER_SELECT, Screen.MISSION_SELECT,
+                            Screen.UNIVERSE, Screen.TITLE, Screen.WARNING,
+                            Screen.ENHANCEMENTS):
+                mood, risk_level = risk.IDLE, 0.0
             status = {"state": screen.value, "fps": round(fps, 1)}
             beat_state = screen.value
             menu_ready = now - last_action > 1.5
@@ -272,6 +326,18 @@ class Bot:
                 hp = vision.health(img)
                 decision = steering.decide(objs, now, hp)
                 ctl.move(decision.direction)
+                risk_level = 0.85 * risk_level + 0.15 * risk.assess(
+                    objs, decision.encirclement, hp)
+                mood = risk.mood(risk_level)
+                rec = self._record
+                if rec is not None and rec.end == "running":
+                    rec.observe(min(0.5, now - last_frame_t), hp, risk_level)
+                    if hp is not None and prev_hp is not None and hp < prev_hp - 0.005:
+                        rec.hits += 1
+                    prev_hp = hp if hp is not None else prev_hp
+                    if now - last_saved > 10.0:
+                        history.save(rec)
+                        last_saved = now
                 status.update(direction=decision.direction, enemies=len(objs.enemies),
                               xp=len(objs.xp), health=None if hp is None else round(hp * 100))
                 if now - last_report > 3.0:
@@ -280,9 +346,26 @@ class Bot:
                     hp_s = "?" if hp is None else f"{hp:.0%}"
                     blocked = ",".join(steering.blocked(now))
                     self._log(f"{decision.direction:<10} foes {len(objs.enemies):<3} "
-                              f"xp {len(objs.xp):<3} near {near:<4} hp {hp_s}"
+                              f"xp {len(objs.xp):<3} near {near:<4} hp {hp_s} "
+                              f"surr {decision.encirclement:.0%}"
                               + (f"  wall: {blocked}" if blocked else ""))
                     last_report = now
+                if tel is not None:
+                    sh = steering.last_shift or (0.0, 0.0)
+                    td = ("" if decision.target is None else
+                          f"{((decision.target[0] - PLAYER_POS[0]) ** 2 + (decision.target[1] - PLAYER_POS[1]) ** 2) ** 0.5:.0f}")
+                    near = "" if decision.nearest_enemy == float("inf") else f"{decision.nearest_enemy:.0f}"
+                    tel.write(f"{time.time():.2f},{'' if hp is None else f'{hp:.3f}'},{near},"
+                              f"{len(objs.enemies)},{len(objs.xp)},{decision.direction},"
+                              f"{sh[0]:.1f},{sh[1]:.1f},{td},"
+                              f"{'|'.join(steering.blocked(now))},{decision.encirclement:.2f}\n")
+                record_every = self.record_every or (5.0 if s.record_test_data else 0.0)
+                if record_every and now - last_record > record_every:
+                    folder = self._debug_dir / "frames"
+                    folder.mkdir(parents=True, exist_ok=True)
+                    cv2.imwrite(str(folder / f"f_{time.strftime('%H%M%S')}.jpg"), img,
+                                [cv2.IMWRITE_JPEG_QUALITY, 85])
+                    last_record = now
                 every = self.overlay_every or (5.0 if s.debug_overlays else 0.0)
                 if every and now - last_overlay > every:
                     self._save_overlay(img, objs, decision, hp)
@@ -347,6 +430,9 @@ class Bot:
                     if changed:
                         shop_bought += 1
                         self._log(f"Enhancements: bought a rank of {name}.")
+                        if self._record is not None:
+                            self._record.purchases += 1
+                            history.save(self._record)
                         shop_pending = None
                         last_action = now
                     elif now - t_buy > 2.0:
@@ -394,6 +480,8 @@ class Bot:
                     self._save_debug(img, "unknown")
                     unknown_saved = True
 
+            status.update(mood=mood[0], mood_label=mood[1], risk=round(risk_level * 100))
+            last_frame_t = now
             if run_started is not None:
                 status["run_time"] = int(now - run_started)
             self._status(status)

@@ -32,3 +32,4 @@ logs/
 
 # Bot settings (per user)
 settings.json
+runs.json
