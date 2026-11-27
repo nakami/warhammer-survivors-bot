@@ -24,6 +24,21 @@ Observations gathered by playing the game through the bot's own interface
 - Options > Gameplay > Keyboard Type is `QWERTY` (left unchanged). There is no
   key rebinding screen.
 
+## Running in the background (game not focused)
+
+- The game keeps running when it loses focus.
+- **Capture** works in the background with `PrintWindow(PW_CLIENTONLY |
+  PW_RENDERFULLCONTENT)` (~25 ms per 1920x1080 frame), also when covered by
+  other windows. Not while minimized. Plain `PW_CLIENTONLY` returns a blank
+  image.
+- **Keyboard/mouse cannot reach it in the background.** Tested while the game
+  was paused and unfocused: posted `WM_KEYDOWN`/`WM_KEYUP` (Esc), the same
+  after posting `WM_ACTIVATE` + `WM_SETFOCUS`, and posted `WM_LBUTTONDOWN/UP`
+  on the Resume button. None had any effect (the game most likely reads
+  keyboard and mouse via Raw Input while focused only).
+- Next option: a virtual XInput controller. The ViGEmBus driver is already
+  installed on the dev machine; this needs the `vgamepad` package.
+
 ## Screen flow
 
 1. Photosensitivity warning: "PRESS TO START", any key.
@@ -43,7 +58,9 @@ Observations gathered by playing the game through the bot's own interface
 - Enemies drop XP skulls (grey / blue) that must be walked over.
 - **Level Up** pauses the game and shows 4 cards at roughly x = 425, 782,
   1138, 1495 (y ~ 600). Click a card to take it. `Ctrl` toggles item view,
-  `E` opens the Armoury.
+  `E` opens the Armoury. Readable from pixels: a green **NEW** banner (item not
+  owned yet), a damage-type tag such as "Fire"/"Default" (weapons only), and
+  the inventory above the cards (6 weapon slots left, 6 passive slots right).
 - `Esc` pauses: tabs Map / Statistics / Armoury / Options (Q/E to switch),
   map zoom with Z/X, buttons Resume / Objectives / Quit.
 - The game does **not** pause when its window loses focus.

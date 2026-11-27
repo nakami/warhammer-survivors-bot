@@ -107,7 +107,7 @@ class Steering:
         return best
 
     def _score(self, name: str, objs: Objects, target: tuple[int, int] | None,
-               blocked: list[str]) -> float:
+               blocked: list[str], caution: float = 1.0) -> float:
         dx, dy = DIRECTIONS[name]
         px, py = PLAYER_POS
         total = 0.0
@@ -116,7 +116,7 @@ class Steering:
             for ex, ey, area in objs.enemies:
                 d = math.hypot(ex - qx, ey - qy)
                 weight = min(area / 400.0, 3.0)  # bigger blobs = bigger/more enemies
-                total -= weight * (DANGER_RADIUS / max(d, 20.0)) ** 2
+                total -= caution * weight * (DANGER_RADIUS / max(d, 20.0)) ** 2
             if target is not None:
                 d0 = math.hypot(target[0] - px, target[1] - py)
                 d1 = math.hypot(target[0] - qx, target[1] - qy)
@@ -127,10 +127,14 @@ class Steering:
             total -= BLOCKED_PENALTY
         return total
 
-    def decide(self, objs: Objects, now: float | None = None) -> Decision:
+    def decide(self, objs: Objects, now: float | None = None,
+               health: float | None = None) -> Decision:
+        """Pick a direction. ``health`` (0..1) makes the player more careful when low."""
+        caution = 1.0 if health is None else 1.0 + 2.0 * max(0.0, 0.6 - health) / 0.6
         target = self._pick_target(objs)
         blocked = self.blocked(now)
-        scores = {name: self._score(name, objs, target, blocked) for name in DIRECTIONS}
+        scores = {name: self._score(name, objs, target, blocked, caution)
+                  for name in DIRECTIONS}
         best = max(scores, key=scores.__getitem__)
         self.previous = best
         px, py = PLAYER_POS

@@ -10,7 +10,7 @@ from pathlib import Path
 
 import cv2
 
-from warhammer_survivors_bot import inputs, window
+from warhammer_survivors_bot import inputs, levelup, window
 from warhammer_survivors_bot.capture import Capturer
 from warhammer_survivors_bot.settings import LABELS, Settings
 from warhammer_survivors_bot.steering import Steering
@@ -24,8 +24,6 @@ _DIR_KEYS = {
 }
 _ARROWS = ("up", "down", "left", "right")
 
-# Level-up card centers (client coords at 1920x1080).
-LEVEL_UP_CARDS = [(425, 600), (782, 600), (1138, 600), (1495, 600)]
 
 # Screens that are passed with a single key press or click, on the way to a new run.
 _MENU_ACTIONS: dict[Screen, tuple[tuple, str]] = {
@@ -94,6 +92,13 @@ class Bot:
         cv2.imwrite(str(path), img)
         self._log(f"Saved screenshot {path}")
 
+    def _save_levelup(self, img) -> None:
+        """Keep level-up screens (small JPEGs) to verify and improve the card reader."""
+        folder = self._debug_dir / "levelups"
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / f"levelup_{time.strftime('%Y%m%d-%H%M%S')}.jpg"
+        cv2.imwrite(str(path), img, [cv2.IMWRITE_JPEG_QUALITY, 85])
+
     def _pause_if_in_run(self) -> None:
         """Leave a running game paused, so the character does not die unattended."""
         hwnd = window.find_window()
@@ -106,7 +111,7 @@ class Bot:
                 return
         capturer = Capturer()
         try:
-            img = capturer.grab(window.client_rect(hwnd))
+            img = capturer.grab(hwnd)
         finally:
             capturer.close()
         if Vision().screen(img)[0] == Screen.IN_RUN:
@@ -172,7 +177,7 @@ class Bot:
                 was_foreground = True
 
             rect = window.client_rect(hwnd)
-            img = capturer.grab(rect)
+            img = capturer.grab(hwnd)
             screen, _ = vision.screen(img)
             now = time.monotonic()
 
@@ -208,9 +213,9 @@ class Bot:
             elif screen == Screen.IN_RUN:
                 objs = vision.objects(img)
                 steering.observe_motion(img, now)
-                decision = steering.decide(objs, now)
-                self._set_direction(decision.direction)
                 hp = vision.health(img)
+                decision = steering.decide(objs, now, hp)
+                self._set_direction(decision.direction)
                 status.update(direction=decision.direction, enemies=len(objs.enemies),
                               xp=len(objs.xp), health=None if hp is None else round(hp * 100))
                 if now - last_report > 3.0:
@@ -231,9 +236,20 @@ class Bot:
                     wait_for_user(f"'{LABELS['pick_level_ups']}' is off")
                 elif menu_ready:
                     # A first click highlights the card; if the screen is still there
-                    # 1.5 s later, the next click confirms it.
-                    x, y = LEVEL_UP_CARDS[0]
-                    self._log("Level up: clicking the first card.")
+                    # 1.5 s later, the next click confirms it. The choice is
+                    # deterministic, so both clicks hit the same card.
+                    state = levelup.read(img)
+                    card = levelup.choose(state)
+                    if screen not in told_waiting:  # once per level-up screen
+                        self._save_levelup(img)
+                        offered = ", ".join(c.kind for c in state.cards) or "unreadable"
+                        self._log(f"Level up: offered [{offered}], own {state.weapons} "
+                                  f"weapons / {state.passives} passives.")
+                        told_waiting.add(screen)
+                    index = card.index if card else 0
+                    x, y = levelup.CARD_CENTERS[index]
+                    self._log(f"Level up: taking card {index + 1}"
+                              + (f" ({card.kind})." if card else " (fallback)."))
                     inputs.click(rect.left + x, rect.top + y)
                     last_action = now
             elif screen == Screen.WARGEAR:

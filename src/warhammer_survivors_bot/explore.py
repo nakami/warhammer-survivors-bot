@@ -33,7 +33,7 @@ def screenshot(name: str = "shot", delay: float = 0.0) -> Path:
     time.sleep(delay)
     hwnd = _hwnd()
     rect = window.client_rect(hwnd)
-    img = Capturer().grab(rect)
+    img = Capturer().grab(hwnd)
     SHOT_DIR.mkdir(exist_ok=True)
     path = SHOT_DIR / f"{name}.png"
     cv2.imwrite(str(path), img)
