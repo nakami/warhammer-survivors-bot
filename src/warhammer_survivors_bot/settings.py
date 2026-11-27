@@ -19,6 +19,7 @@ class Settings:
     buy_enhancements: bool = False  # spend coins on Enhancements between runs
     debug_overlays: bool = False   # save annotated frames to screenshots/overlay/
     record_test_data: bool = False  # telemetry CSV + raw frames for tuning
+    learning_mode: bool = False    # vary steering per run and learn from the outcomes
 
     @classmethod
     def load(cls, path: Path = SETTINGS_FILE) -> Settings:
@@ -43,4 +44,5 @@ LABELS: dict[str, str] = {
     "buy_enhancements": "Buy enhancements with coins",
     "debug_overlays": "Save debug overlays (every 5 s)",
     "record_test_data": "Record test data: telemetry + frames (applies on Start)",
+    "learning_mode": "Learning mode: try steering variants, learn from results",
 }

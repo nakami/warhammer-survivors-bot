@@ -11,6 +11,7 @@ from tkinter import scrolledtext, ttk
 from warhammer_survivors_bot import __version__, risk, runstate, window
 from warhammer_survivors_bot.bot import Bot
 from warhammer_survivors_bot.gui_charts import LiveChart
+from warhammer_survivors_bot.learning import LEARNING_FILE, Learner
 from warhammer_survivors_bot.runlog import RunHistory
 from warhammer_survivors_bot.settings import LABELS, Settings
 
@@ -47,6 +48,8 @@ class App:
                        status=lambda s: self._events.put(("status", s)),
                        settings=self.settings, source="control window")
         self._external_pid: int | None = None
+        self._showing_external = False
+        self._ext_log_pos = 0
 
         top = ttk.Frame(root, padding=8)
         top.pack(fill="x")
@@ -98,6 +101,8 @@ class App:
         log_tab = ttk.Frame(tabs, padding=(0, 6, 0, 0))
         tabs.add(live, text="Live")
         tabs.add(runs_tab, text="Last runs")
+        learn_tab = ttk.Frame(tabs, padding=(0, 6, 0, 0))
+        tabs.add(learn_tab, text="Learning")
         tabs.add(log_tab, text="Log")
 
         grid = ttk.LabelFrame(live, text="Status", padding=8)
@@ -143,12 +148,62 @@ class App:
             anchor="w", pady=(8, 0))
         root.after(200, self._refresh_runs)
 
+        # Learning: what learning mode found out so far (from learning.json).
+        self._learn = ttk.Treeview(learn_tab, columns=("param", "value", "runs", "reward",
+                                                       "best"), show="headings", height=15)
+        for key, heading, width, anchor in (("param", "Parameter", 140, "w"),
+                                            ("value", "Value", 60, "e"),
+                                            ("runs", "Runs", 50, "e"),
+                                            ("reward", "Avg reward", 80, "e"),
+                                            ("best", "P(best)", 70, "e")):
+            self._learn.heading(key, text=heading, anchor=anchor)
+            self._learn.column(key, width=width, anchor=anchor, stretch=False)
+        self._learn.pack(fill="x")
+        self._learn_summary = tk.StringVar(value="No runs learned yet. Tick 'Learning mode'.")
+        ttk.Label(learn_tab, textvariable=self._learn_summary, wraplength=500,
+                  justify="left", font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(8, 0))
+        ttk.Label(learn_tab, foreground="#666666", wraplength=500, justify="left",
+                  text="Each run in learning mode tries one value per parameter; values that "
+                       "led to better runs are chosen more often. Reward = play minutes + "
+                       "0.25 x level + 0.5 x chests. Only complete runs (started from the "
+                       "menu, ended by game over) count. P(best) = how likely this value is "
+                       "the best one, given the runs so far.").pack(anchor="w", pady=(8, 0))
+        self._learn_mtime = None
+        root.after(300, self._refresh_learning)
+
         self.log = scrolledtext.ScrolledText(log_tab, height=10, state="disabled",
                                              font=("Consolas", 9))
         self.log.pack(fill="both", expand=True)
 
         root.protocol("WM_DELETE_WINDOW", self.close)
         root.after(100, self._poll)
+
+    def _refresh_learning(self) -> None:
+        try:
+            mtime = LEARNING_FILE.stat().st_mtime
+        except OSError:
+            mtime = None
+        if mtime is not None and mtime != self._learn_mtime:
+            self._learn_mtime = mtime
+            learner = Learner()
+            self._learn.delete(*self._learn.get_children())
+            last_param = None
+            for param, value, n, mean, prob in learner.summary():
+                name = param.lower().replace("_", " ") if param != last_param else ""
+                last_param = param
+                self._learn.insert("", "end", values=(name, f"{value:g}", n,
+                                                      f"{mean:.1f}" if n else "-",
+                                                      f"{prob:.0%}"))
+            rewards = [h["reward"] for h in learner.history]
+            if rewards:
+                text = (f"{len(rewards)} run(s) learned, average reward "
+                        f"{sum(rewards) / len(rewards):.1f}.")
+                if len(rewards) >= 10:
+                    first, last = rewards[:5], rewards[-5:]
+                    text += (f" First 5 runs: {sum(first) / 5:.1f}, "
+                             f"last 5 runs: {sum(last) / 5:.1f}.")
+                self._learn_summary.set(text)
+        self.root.after(5000, self._refresh_learning)
 
     def _refresh_runs(self) -> None:
         """Reload the run table when runs.json changed (also for script runs)."""
@@ -185,7 +240,7 @@ class App:
 
     def _sample_charts(self) -> None:
         """Every 0.5 s: add the latest values (gaps outside a run), redraw."""
-        if self.bot.running:
+        if self.bot.running or self._external_pid:
             st = self._last_status
             if st.get("state") == "in_run":
                 self._chart_health.add([st.get("health"), st.get("risk")])
@@ -276,6 +331,24 @@ class App:
         self.log.see("end")
         self.log.configure(state="disabled")
 
+    def _tail_external_log(self, pid: int) -> None:
+        path = runstate.log_file(pid)
+        try:
+            with open(path, encoding="utf-8") as f:
+                f.seek(self._ext_log_pos)
+                chunk = f.read()
+                self._ext_log_pos = f.tell()
+        except OSError:
+            return
+        for line in chunk.splitlines():
+            self._append_raw(line)
+
+    def _append_raw(self, line: str) -> None:
+        self.log.configure(state="normal")
+        self.log.insert("end", line + "\n")
+        self.log.see("end")
+        self.log.configure(state="disabled")
+
     def _poll(self) -> None:
         latest_status = None
         try:
@@ -287,6 +360,18 @@ class App:
                     latest_status = payload
         except queue.Empty:
             pass
+        # A bot running in another process (e.g. a script test run) shares its live
+        # status and log via the run-state files: show them as if it ran here.
+        if latest_status is None and not self.bot.running:
+            run = runstate.current()
+            if run and run["pid"] != os.getpid():
+                latest_status = run.get("status") or None
+                self._tail_external_log(run["pid"])
+                self._showing_external = True
+            elif self._showing_external:
+                latest_status = {"state": "stopped"}
+                self._showing_external = False
+                self._ext_log_pos = 0
         if latest_status is not None:
             self._last_status = latest_status
             for key, value in latest_status.items():

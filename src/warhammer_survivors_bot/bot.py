@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import collections
 import ctypes
+import json
 import os
 import threading
 import time
@@ -11,7 +13,7 @@ from pathlib import Path
 
 import cv2
 
-from warhammer_survivors_bot import enhance, levelup, risk, runstate, window
+from warhammer_survivors_bot import enhance, learning, levelup, risk, runstate, window
 from warhammer_survivors_bot.capture import CaptureError, Capturer
 from warhammer_survivors_bot.runlog import RunHistory, RunRecord
 from warhammer_survivors_bot.controls import Controller, KeyboardMouse
@@ -56,7 +58,9 @@ class Bot:
         self.overlay_every = overlay_every
         # Read on every frame, so toggles take effect while the bot is running.
         self.settings = settings or Settings()
-        self._log = log
+        # Every log line also goes to the shared run-state log, so the control
+        # window can show it when this bot runs in another process.
+        self._log = lambda m: (log(m), runstate.append_log(f"{time.strftime('%H:%M:%S')}  {m}"))
         self._status = status
         self._debug_dir = debug_dir
         self._stop = threading.Event()
@@ -120,6 +124,22 @@ class Bot:
         cv2.imwrite(str(folder / f"ov_{time.strftime('%H%M%S')}.jpg"), vis,
                     [cv2.IMWRITE_JPEG_QUALITY, 80])
 
+    def _save_blackbox(self, frames, record) -> None:
+        """The last seconds before a game over: frames + status + run summary."""
+        if not frames:
+            return
+        folder = self._debug_dir / "blackbox" / time.strftime("%Y%m%d-%H%M%S")
+        folder.mkdir(parents=True, exist_ok=True)
+        statuses = []
+        for i, (t, jpg, st) in enumerate(frames):
+            (folder / f"frame_{i:02d}.jpg").write_bytes(jpg)
+            statuses.append({"t": round(t, 2), **st})
+        from dataclasses import asdict
+        (folder / "info.json").write_text(json.dumps(
+            {"run": asdict(record), "frames": statuses}, indent=1), encoding="utf-8")
+        self._log(f"Saved the last {len(frames) / 2:.0f} s before game over to {folder}")
+        frames.clear()
+
     def _save_levelup(self, img) -> None:
         """Keep level-up screens (small JPEGs) to verify and improve the card reader."""
         folder = self._debug_dir / "levelups"
@@ -156,6 +176,7 @@ class Bot:
             self._log(f"ERROR: {exc!r}")
             raise
         finally:
+            learning.restore_defaults()
             try:
                 self.controls.release()
                 self._pause_if_in_run()
@@ -201,6 +222,7 @@ class Bot:
         last_levelup: levelup.LevelUp | None = None
         last_beat = 0.0
         last_record = 0.0
+        last_status: dict = {}
         risk_level = 0.0
         mood = risk.IDLE
         history = RunHistory()
@@ -209,6 +231,10 @@ class Bot:
         last_saved = 0.0
         prev_hp: float | None = None
         last_chest = -100.0
+        learner: learning.Learner | None = None
+        seen_menu = False          # a run started after a menu counts as "fresh"
+        blackbox: collections.deque = collections.deque(maxlen=24)  # ~12 s at 2 fps
+        last_box = 0.0
         tel = None
         tel_path = self.telemetry
         if tel_path is None and self.settings.record_test_data:
@@ -229,7 +255,7 @@ class Bot:
 
         while not self._stop.is_set():
             if time.monotonic() - last_beat > 0.5:
-                runstate.heartbeat(self.source, started_wall, beat_state)
+                runstate.heartbeat(self.source, started_wall, beat_state, last_status)
                 last_beat = time.monotonic()
                 if runstate.stop_requested():
                     self._log("Stop requested from the control window.")
@@ -278,9 +304,23 @@ class Bot:
                 if screen == Screen.IN_RUN and run_started is None:
                     run_started = now
                     steering.reset()  # new run: forget remembered walls etc.
-                    self._record = RunRecord(source=self.source)
+                    self._record = RunRecord(source=self.source, fresh=seen_menu)
+                    seen_menu = False
+                    blackbox.clear()
+                    if self.settings.learning_mode:
+                        learner = learner or learning.Learner()
+                        config = learner.choose()
+                        learner.apply(config)
+                        self._record.config = config
+                        self._log("Learning mode: this run uses " + ", ".join(
+                            f"{k.lower()}={v:g}" for k, v in config.items()))
+                    else:
+                        learning.restore_defaults()  # hand-tuned values
                     history.save(self._record)
                     prev_hp = None
+                if screen in (Screen.MAIN_MENU, Screen.CHARACTER_SELECT,
+                              Screen.MISSION_SELECT):
+                    seen_menu = True
                 rec = self._record
                 if rec is not None and rec.end == "running":
                     if screen == Screen.LEVEL_UP:
@@ -290,6 +330,17 @@ class Bot:
                     elif screen == Screen.GAME_OVER:
                         rec.end = "game over"
                         history.save(rec)
+                        self._save_blackbox(blackbox, rec)
+                        if learner is not None and rec.config and rec.fresh:
+                            value = learning.reward(rec.play_seconds, rec.level, rec.chests)
+                            learner.update(rec.config, value,
+                                           {"play": rec.play_seconds, "level": rec.level,
+                                            "chests": rec.chests})
+                            self._log(f"Learning mode: run reward {value:.1f} "
+                                      f"({len(learner.history)} runs learned).")
+                        elif learner is not None and rec.config:
+                            self._log("Learning mode: run was resumed mid-way, "
+                                      "not used for learning.")
                     if screen == Screen.WARGEAR:
                         last_chest = now
                 if screen in (Screen.MAIN_MENU, Screen.MISSION_SELECT):
@@ -329,6 +380,12 @@ class Bot:
                 risk_level = 0.85 * risk_level + 0.15 * risk.assess(
                     objs, decision.encirclement, hp)
                 mood = risk.mood(risk_level)
+                if (s.learning_mode or s.record_test_data) and now - last_box > 0.5:
+                    small = cv2.resize(img, None, fx=0.5, fy=0.5)
+                    ok, jpg = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, 75])
+                    if ok:
+                        blackbox.append((time.time(), jpg.tobytes(), dict(status)))
+                    last_box = now
                 rec = self._record
                 if rec is not None and rec.end == "running":
                     rec.observe(min(0.5, now - last_frame_t), hp, risk_level)
@@ -485,4 +542,5 @@ class Bot:
             if run_started is not None:
                 status["run_time"] = int(now - run_started)
             self._status(status)
+            last_status = status
             time.sleep(0.01)

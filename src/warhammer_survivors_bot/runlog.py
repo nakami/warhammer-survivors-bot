@@ -24,6 +24,8 @@ class RunRecord:
     purchases: int = 0            # enhancement ranks bought after the run
     end: str = "running"          # "game over", "stopped" or "running"
     source: str = ""              # who ran the bot (control window / script)
+    config: dict | None = None    # steering parameters chosen by learning mode
+    fresh: bool = False           # started from the menu (not resumed mid-run)
 
     @property
     def level(self) -> int:
