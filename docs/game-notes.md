@@ -46,3 +46,25 @@ Observations gathered by playing the game through the bot's own interface
   `E` opens the Armoury.
 - `Esc` pauses: tabs Map / Statistics / Armoury / Options (Q/E to switch),
   map zoom with Z/X, buttons Resume / Objectives / Quit.
+- The game does **not** pause when its window loses focus.
+- Imperial Bastion has walls and buildings that block movement.
+- **Wargear chests**: a "Wargear Acquired!" dialog (pauses the game) with
+  `OPEN` (Enter), an opening animation, then the reward (coins + an item) with
+  `Accept` (Enter).
+
+## After a run
+
+1. "GAME OVER" with `Quit` (Enter).
+2. Recap: mission stats, weapons, enhancements; `Next` (Enter).
+3. Enhancements shop: permanent upgrades bought with coins (costs 416+ at the
+   time of writing; unaffordable prices are red). `Finish` (Enter) leaves
+   without buying, `Esc` = Back.
+4. Main menu.
+
+## Vision
+
+- Screens are recognised by template matching small UI crops
+  (`src/warhammer_survivors_bot/templates/`) at fixed positions.
+- On Imperial Bastion, enemies (Tyranids) are dark purple (HSV hue ~133),
+  blue XP skulls hue ~100, grey XP skulls are unsaturated. The colour ranges
+  in `vision.py` will need adjusting for other maps.

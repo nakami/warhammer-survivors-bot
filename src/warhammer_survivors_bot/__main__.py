@@ -1,11 +1,6 @@
-"""Entry point for ``python -m warhammer_survivors_bot``."""
+"""Entry point for ``python -m warhammer_survivors_bot``: opens the control window."""
 
-from warhammer_survivors_bot import __version__
-
-
-def main() -> None:
-    print(f"warhammer-survivors-bot v{__version__}")
-
+from warhammer_survivors_bot.gui import main
 
 if __name__ == "__main__":
     main()

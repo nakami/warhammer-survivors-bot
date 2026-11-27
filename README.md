@@ -10,6 +10,7 @@ advantage over other players.
 
 - Windows 10/11
 - Python 3.13+
+- The game in windowed mode at 1920x1080 (the screen templates assume it)
 
 ## Setup
 
@@ -21,10 +22,27 @@ pip install -e ".[dev]"
 
 ## Usage
 
+Start the game, then open the control window:
+
 ```powershell
 python -m warhammer_survivors_bot
+```
 
-# Exploration helper: one action, then a screenshot in ./screenshots
+- **Start** / **Stop** run the bot. **F8** also stops it. When it stops during
+  a run, it pauses the game.
+- **Features** toggle parts of the bot while it runs (saved to `settings.json`):
+  movement, level-up picks, opening wargear chests, starting the next run
+  automatically, and buying enhancements (off by default; not implemented yet).
+- The status panel and log show what the bot sees and does.
+- The bot only sends input while the game window is in the foreground. Keep
+  the control window beside the game (it places itself there), because the bot
+  reads the screen and anything covering the game hides it.
+- Screens the bot does not recognise are left alone, and a screenshot is saved
+  to `screenshots/`.
+
+Exploration helper (one action, then a screenshot in `./screenshots`):
+
+```powershell
 python -m warhammer_survivors_bot.explore shot
 python -m warhammer_survivors_bot.explore key e        # layout-aware letter
 python -m warhammer_survivors_bot.explore key left 1.0 # hold for 1s

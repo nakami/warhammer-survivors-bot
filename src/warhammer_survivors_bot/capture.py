@@ -10,7 +10,7 @@ from warhammer_survivors_bot.window import Rect
 
 class Capturer:
     def __init__(self) -> None:
-        self._sct = mss.mss()
+        self._sct = mss.MSS()
 
     def grab(self, rect: Rect) -> np.ndarray:
         """Return a BGR uint8 image of the given screen rectangle."""
