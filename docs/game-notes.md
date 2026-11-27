@@ -51,6 +51,18 @@ Observations gathered by playing the game through the bot's own interface
   virtual controller works while the game is unfocused. (The game uses
   Rewired for input, which ignores input when the app is not focused.)
 
+- **Side effect of the focus hook, and its fix:** the game reads keyboard and
+  mouse from *all* windows (Raw Input with an input sink, plus polling
+  `GetKeyboardState` ~120x/s) and only discards them when it believes it is
+  unfocused. With the hook, keys typed into other windows (e.g. Esc in a
+  terminal) therefore reached the game. The hook now filters that input while
+  the game is not really in front (checked via `GetGUIThreadInfo`): Raw Input
+  keyboard/mouse events become no-ops, pressed bits from `GetKeyboardState`/
+  `GetKeyState`/`GetAsyncKeyState` are cleared, `GetCursorPos` points outside
+  the game. Verified: Esc in another window toggled pause with the filter off
+  and had no effect with it on. Clicking the game itself restores normal
+  keyboard/mouse play.
+
 ## Controller layout (Xbox)
 
 - Move: left stick. Pause: START. Pause menu: B Resume, X Objectives,
