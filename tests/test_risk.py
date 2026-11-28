@@ -34,3 +34,9 @@ def test_moods_cover_the_whole_range() -> None:
     labels = [risk.mood(v / 100)[1] for v in range(0, 101)]
     assert labels[0] == "relaxed" and labels[-1] == "critical"
     assert {"focused", "tense", "danger"} <= set(labels)
+
+
+def test_nearby_elite_raises_risk() -> None:
+    px, py = PLAYER_POS
+    calm = risk.assess(Objects(), 0.0, 1.0)
+    assert risk.assess(Objects(elites=[(px + 150, py)]), 0.0, 1.0) >= calm + 0.35

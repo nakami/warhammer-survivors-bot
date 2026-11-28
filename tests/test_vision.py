@@ -95,3 +95,33 @@ def test_wall_memory_blocks_a_direction_where_we_got_stuck() -> None:
     # Even after the short block expired, the remembered spot keeps "right" unattractive.
     assert steering.wall_ahead(Objects(), 1.0, 0.0, now=105.0) > 0.5
     assert steering.wall_ahead(Objects(), -1.0, 0.0, now=105.0) == 0.0
+
+
+def _bar(img: np.ndarray, x: int, y: int, fill: float = 1.0, width: int = 128) -> None:
+    """Draw a health bar: dark frame, red fill from the left (BGR)."""
+    img[y - 5:y + 9, x - 4:x + width + 4] = (20, 20, 20)
+    img[y:y + 4, x:x + int(width * fill)] = (30, 30, 200)
+
+
+def test_elite_is_found_by_its_health_bar(vision: Vision) -> None:
+    img = np.full((1080, 1920, 3), (60, 110, 160), np.uint8)  # brown ground
+    _bar(img, 600, 700, fill=0.4)  # damaged elite
+    elites = vision.objects(img).elites
+    assert len(elites) == 1
+    ex, ey = elites[0]
+    assert abs(ex - 664) < 5 and ey < 700
+
+
+def test_player_health_bar_is_not_an_elite(vision: Vision) -> None:
+    img = np.full((1080, 1920, 3), (60, 110, 160), np.uint8)
+    _bar(img, 922, 548, width=76)  # the player's bar
+    assert vision.objects(img).elites == []
+
+
+def test_steering_keeps_away_from_elite_but_engages_normal_enemies() -> None:
+    px, py = PLAYER_POS
+    # An elite at 170 px to the right (outside the normal safe distance) and its sprite blob.
+    objs = Objects(enemies=[(px + 170, py, 900)], elites=[(px + 170, py)])
+    decision = Steering().decide(objs, health=1.0)
+    assert "left" in decision.direction
+    assert decision.engage is None  # the elite's own sprite is not an engage target

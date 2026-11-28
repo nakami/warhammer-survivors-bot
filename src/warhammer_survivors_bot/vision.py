@@ -87,10 +87,18 @@ def _load_templates() -> dict[Screen, np.ndarray]:
     return out
 
 
+ELITE_BAR_TOP = 90          # px; above this is the HUD (XP bar)
+ELITE_BAR_WIDTH = 128       # full bar; the red fill starts at its left edge
+ELITE_BODY_ABOVE_BAR = 55   # the sprite's center is this far above its bar
+PLAYER_BAR = (900, 530, 1020, 570)  # the player's own health bar (x0, y0, x1, y1)
+
+
 @dataclass
 class Objects:
     enemies: list[tuple[int, int, int]] = field(default_factory=list)  # x, y, area
     xp: list[tuple[int, int]] = field(default_factory=list)
+    # Elites (green-outlined mini-bosses), located by their own health bar: x, y of the body.
+    elites: list[tuple[int, int]] = field(default_factory=list)
     # Walls/buildings at 1/OBSTACLE_SCALE resolution (uint8, 255 = blocked), if computed.
     obstacles: np.ndarray | None = None
 
@@ -166,8 +174,35 @@ class Vision:
             if ring.size and ring.mean() / 255.0 >= 0.25:
                 out.xp.append((int(cents[i][0]), int(cents[i][1])))
 
+        out.elites = self._elites(hsv)
         out.obstacles = self._obstacles(hsv)
         out.xp = [(x, y) for x, y in out.xp if out.blocked_at(x, y, radius=16) == 0.0]
+        return out
+
+    @staticmethod
+    def _elites(hsv: np.ndarray) -> list[tuple[int, int]]:
+        """Elites carry a health bar (dark frame ~130 px wide, red fill from the left)
+        below the sprite; normal enemies have none. Black-box analysis showed most
+        deaths are an elite walking into the player, so they need their own handling."""
+        red = cv2.inRange(hsv, (0, 120, 90), (8, 255, 255)) | cv2.inRange(
+            hsv, (170, 120, 90), (180, 255, 255))
+        dark = cv2.inRange(hsv, (0, 0, 0), (180, 255, 60))
+        red[:ELITE_BAR_TOP] = 0
+        x0, y0, x1, y1 = PLAYER_BAR
+        red[y0:y1, x0:x1] = 0
+        red = cv2.morphologyEx(red, cv2.MORPH_CLOSE, np.ones((1, 5), np.uint8))
+        n, _, stats, _ = cv2.connectedComponentsWithStats(red)
+        out = []
+        for i in range(1, n):
+            x, y, w, h, area = (int(v) for v in stats[i])
+            if not (2 <= h <= 12 and w >= 24 and w >= 4 * h and area >= 0.6 * w * h):
+                continue
+            above, below = dark[max(0, y - 4):y, x:x + w], dark[y + h:y + h + 4, x:x + w]
+            if not above.size or not below.size:
+                continue
+            if above.mean() < 0.5 * 255 or below.mean() < 0.5 * 255:
+                continue  # a red streak (blood, effects), not a framed bar
+            out.append((x + ELITE_BAR_WIDTH // 2, y - ELITE_BODY_ABOVE_BAR))
         return out
 
     def _obstacles(self, hsv: np.ndarray) -> np.ndarray:

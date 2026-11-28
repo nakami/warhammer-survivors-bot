@@ -52,11 +52,16 @@ ENGAGE_WEIGHT_WITH_XP = 0.3       # engaging matters less while collecting XP
 ENGAGE_MIN_HEALTH = 0.5
 ESCAPE_RADIUS = 230.0             # enemies within this count for encirclement
 SECTORS = 16
-ESCAPE_WEIGHT = 2.5               # bonus for heading into a free gap, x encirclement
+ESCAPE_WEIGHT = 4.0               # bonus for heading into a free gap, x encirclement
 CROWD_RADIUS = 220.0              # mild preference for open space further ahead
 CROWD_WEIGHT = 0.03
-TARGET_WEIGHT = 2.0               # reward for closing in on the XP target
+TARGET_WEIGHT = 3.0               # reward for closing in on the XP target
 XP_SAFETY = 95.0                  # pickups with an enemy closer than this are skipped
+# Elites (mini-bosses, see Vision._elites) killed the player in most recorded
+# deaths: they hit hard and walk straight at the player. Keep a wide berth.
+ELITE_SAFE_DISTANCE = 210.0
+ELITE_WEIGHT = 4.0
+ELITE_BODY = 90.0                 # enemy blobs this close to an elite are part of it
 XP_CLUSTER = 90.0                 # pickups this close together count as a group
 CONTINUITY = 0.25
 BLOCKED_PENALTY = 5.0
@@ -216,6 +221,8 @@ class Steering:
         for gx, gy in objs.xp:
             if any(math.hypot(ex - gx, ey - gy) < XP_SAFETY for ex, ey, _ in objs.enemies):
                 continue
+            if any(math.hypot(ex - gx, ey - gy) < ELITE_SAFE_DISTANCE for ex, ey in objs.elites):
+                continue
             if not self._clear_path(objs, (px, py + FEET_OFFSET), (gx, gy)):
                 continue
             group = sum(1 for ox, oy in objs.xp if math.hypot(ox - gx, oy - gy) < XP_CLUSTER)
@@ -244,6 +251,9 @@ class Steering:
                 total -= caution * weight * _danger(d)
                 if ahead == LOOKAHEAD[-1] and d < CROWD_RADIUS:
                     total -= CROWD_WEIGHT * weight
+            for ex, ey in objs.elites:
+                d = math.hypot(ex - qx, ey - qy)
+                total -= caution * ELITE_WEIGHT * (ELITE_SAFE_DISTANCE / max(d, 20.0)) ** 4
             if target is not None:
                 d0 = math.hypot(target[0] - px, target[1] - py)
                 d1 = math.hypot(target[0] - qx, target[1] - qy)
@@ -262,7 +272,8 @@ class Steering:
             # when an enemy is about to reach us.
             total -= 0.3
             if any(math.hypot(ex - px, ey - py) < SAFE_DISTANCE * 1.5
-                   for ex, ey, _ in objs.enemies):
+                   for ex, ey, _ in objs.enemies) or any(
+                    math.hypot(ex - px, ey - py) < ELITE_SAFE_DISTANCE for ex, ey in objs.elites):
                 total -= 1.0
         if name == self.previous and name != "stay":  # don't let idling become sticky
             total += CONTINUITY
@@ -284,8 +295,11 @@ class Steering:
         blocked = self.blocked(now)
         px, py = PLAYER_POS
         engage = None
-        if objs.enemies and (health is None or health >= ENGAGE_MIN_HEALTH):
-            ex, ey, _ = min(objs.enemies, key=lambda e: math.hypot(e[0] - px, e[1] - py))
+        # Engage normal enemies only, never an elite's own sprite.
+        foes = [e for e in objs.enemies
+                if all(math.hypot(e[0] - x, e[1] - y) >= ELITE_BODY for x, y in objs.elites)]
+        if foes and (health is None or health >= ENGAGE_MIN_HEALTH):
+            ex, ey, _ = min(foes, key=lambda e: math.hypot(e[0] - px, e[1] - py))
             engage = (ex, ey)
         scores = {name: self._score(name, objs, target, blocked, caution, engage,
                                     encircle, free, now)

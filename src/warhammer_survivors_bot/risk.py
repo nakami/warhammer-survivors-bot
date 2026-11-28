@@ -37,9 +37,11 @@ def assess(objs: Objects, encirclement: float, health: float | None) -> float:
     close = sum(1 for ex, ey, _ in objs.enemies if math.hypot(ex - px, ey - py) < 300)
     crowd = min(1.0, close / 25.0)
     hurt = 0.0 if health is None else min(1.0, max(0.0, (0.7 - health) / 0.6))
+    elite = min((math.hypot(ex - px, ey - py) for ex, ey in objs.elites), default=math.inf)
+    elite_close = min(1.0, max(0.0, (400.0 - elite) / 250.0))  # 0 beyond 400 px, 1 within 150
     # Being surrounded *and* in contact is what kills; each factor alone less so.
     risk = (0.30 * contact + 0.30 * encirclement + 0.25 * hurt + 0.15 * crowd
-            + 0.25 * contact * encirclement)
+            + 0.25 * contact * encirclement + 0.40 * elite_close)
     return min(1.0, risk)
 
 

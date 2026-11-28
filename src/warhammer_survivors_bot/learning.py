@@ -28,9 +28,12 @@ LEARNING_FILE = Path("learning.json")
 # Parameter -> candidate values (the current hand-tuned default is among them).
 PARAMETERS: dict[str, list[float]] = {
     "ENGAGE_DISTANCE": [105.0, 125.0, 160.0],
-    "SAFE_DISTANCE": [95.0, 105.0, 120.0],
-    "TARGET_WEIGHT": [1.5, 2.0, 3.0],
-    "ESCAPE_WEIGHT": [1.5, 2.5, 4.0],
+    # Round 2 (after 74 runs): dropped the clear losers (SAFE 120, TARGET 1.5,
+    # ESCAPE 1.5) and extended the ranges whose best value was at the top end.
+    # Statistics of dropped values stay in learning.json but are no longer used.
+    "SAFE_DISTANCE": [95.0, 105.0],
+    "TARGET_WEIGHT": [2.0, 3.0, 4.0],
+    "ESCAPE_WEIGHT": [2.5, 4.0, 6.0],
     "XP_SAFETY": [75.0, 95.0, 130.0],
 }
 # The hand-tuned values, captured once at import (before any variant is applied).

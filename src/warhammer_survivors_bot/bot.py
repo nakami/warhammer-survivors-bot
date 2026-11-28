@@ -109,6 +109,8 @@ class Bot:
             cv2.rectangle(vis, (ex - r, ey - r), (ex + r, ey + r), (255, 0, 255), 2)
         for gx, gy in objs.xp:
             cv2.circle(vis, (gx, gy), 6, (255, 255, 0), 2)
+        for ex, ey in objs.elites:
+            cv2.circle(vis, (ex, ey), 60, (0, 0, 255), 4)
         if decision.target:
             cv2.circle(vis, decision.target, 16, (0, 255, 0), 3)
         px, py = PLAYER_POS
@@ -405,6 +407,7 @@ class Bot:
                     self._log(f"{decision.direction:<10} foes {len(objs.enemies):<3} "
                               f"xp {len(objs.xp):<3} near {near:<4} hp {hp_s} "
                               f"surr {decision.encirclement:.0%}"
+                              + (f"  ELITE x{len(objs.elites)}" if objs.elites else "")
                               + (f"  wall: {blocked}" if blocked else ""))
                     last_report = now
                 if tel is not None:
